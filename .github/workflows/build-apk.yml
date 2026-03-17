@@ -71,17 +71,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Java & Flutter
-        uses: ./.github/actions/setup-environment # (Optional) Bạn có thể tách action riêng nếu muốn tái sử dụng
-        continue-on-error: true # Dùng lại setup như job analyze
-        
-      # Setup Java & Flutter (Copy lại từ trên nếu không tách file)
-      - uses: actions/setup-java@v4
+      - name: Setup Java
+        uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: ${{ env.JAVA_VERSION }}
           cache: 'gradle'
-      - uses: subosito/flutter-action@v2
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
