@@ -24,3 +24,11 @@
 -dontskipnonpubliclibraryclasses
 -dontpreverify
 -verbose
+
+# Fix R8 missing classes for Play Core (common in Flutter release builds)
+-dontwarn com.google.android.play.core.**
+-keep class com.google.android.play.core.** { *; }
+
+# Fix R8 missing classes for Google Play Services if needed
+-dontwarn com.google.android.gms.**
+
