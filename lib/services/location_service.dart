@@ -40,14 +40,9 @@ class LocationService {
       bool hasPermission = await requestLocationPermission();
       if (!hasPermission) return null;
 
-      final locationSettings = AndroidSettings(
-        accuracy: LocationAccuracy.high,
-        distanceFilter: 10,
-        forceLocationManager: true,
-      );
-
       return await Geolocator.getCurrentPosition(
-        locationSettings: locationSettings,
+        desiredAccuracy: LocationAccuracy.high,
+        forceAndroidLocationManager: true,
       );
     } catch (e) {
       print('LocationService: Error getting location: $e');
