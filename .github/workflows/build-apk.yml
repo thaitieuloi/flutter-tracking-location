@@ -1,4 +1,4 @@
-name: Build & Release APK
+name: Flutter CI/CD Optimized
 
 on:
   push:
@@ -8,154 +8,141 @@ on:
   pull_request:
     branches: [main]
 
+# Hủy các build cũ nếu có push mới cùng branch để tiết kiệm tài nguyên
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   FLUTTER_VERSION: '3.22.0'
   JAVA_VERSION: '17'
 
 jobs:
-  # ─── ANALYZE & TEST ────────────────────────────
+  # ─── JOB 1: CHUẨN BỊ & KIỂM TRA ────────────────────────────
   analyze:
     name: 🔍 Analyze & Test
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-java@v4
+      - name: Setup Java
+        uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: ${{ env.JAVA_VERSION }}
+          cache: 'gradle' # Cache tự động cho Gradle
 
-      - uses: subosito/flutter-action@v2
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
-      # 🔥 Cache pub (important)
-      - uses: actions/cache@v4
+      # Tối ưu cache cho pub dependencies
+      - name: Cache Pub packages
+        uses: actions/cache@v4
         with:
-          path: ~/.pub-cache
+          path: |
+            ${{ env.FLUTTER_HOME }}/.pub-cache
+            ~/.pub-cache
           key: ${{ runner.os }}-pub-${{ hashFiles('**/pubspec.lock') }}
+          restore-keys: ${{ runner.os }}-pub-
 
-      - name: Create .env
-        run: |
-          echo "SUPABASE_URL=${{ secrets.SUPABASE_URL }}" > .env
-          echo "SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}" >> .env
+      - name: Install Dependencies
+        run: flutter pub get
 
-      - run: flutter pub get
-
-      # 🔥 Không block build
-      - name: Analyze
+      - name: Static Analysis
         run: flutter analyze --no-fatal-infos
-        continue-on-error: true
 
-      - name: Test
+      - name: Unit Tests
         run: flutter test --no-pub
-        continue-on-error: true
 
-  # ─── BUILD ─────────────────────────────────────
+  # ─── JOB 2: BUILD ARTIFACTS ────────────────────────────────
   build:
     name: 🏗️ Build APK & AAB
-    runs-on: ubuntu-latest
     needs: analyze
-
+    runs-on: ubuntu-latest
+    # Chỉ build khi push vào main hoặc có tag v*
+    if: github.event_name == 'push' 
+    
     steps:
       - uses: actions/checkout@v4
 
+      - name: Setup Java & Flutter
+        uses: ./.github/actions/setup-environment # (Optional) Bạn có thể tách action riêng nếu muốn tái sử dụng
+        continue-on-error: true # Dùng lại setup như job analyze
+        
+      # Setup Java & Flutter (Copy lại từ trên nếu không tách file)
       - uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: ${{ env.JAVA_VERSION }}
-
+          cache: 'gradle'
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
-      - uses: actions/cache@v4
-        with:
-          path: ~/.pub-cache
-          key: ${{ runner.os }}-pub-${{ hashFiles('**/pubspec.lock') }}
-
-      - name: Create .env
+      - name: Create Environment File
         run: |
           echo "SUPABASE_URL=${{ secrets.SUPABASE_URL }}" > .env
           echo "SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}" >> .env
 
-      - run: flutter pub get
-
-      # ✅ FIX đúng
-      - name: Setup Keystore
-        if: ${{ secrets.KEYSTORE_BASE64 != '' }}
+      - name: Decode Keystore
+        if: env.KEYSTORE_BASE64 != ''
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         run: |
-          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > android/app/release-keystore.jks
-          cat > android/key.properties << EOF
-          storePassword=${{ secrets.STORE_PASSWORD }}
-          keyPassword=${{ secrets.KEY_PASSWORD }}
-          keyAlias=${{ secrets.KEY_ALIAS }}
-          storeFile=release-keystore.jks
-          EOF
+          echo "$KEYSTORE_BASE64" | base64 --decode > android/app/release-keystore.jks
+          echo "storePassword=${{ secrets.STORE_PASSWORD }}" > android/key.properties
+          echo "keyPassword=${{ secrets.KEY_PASSWORD }}" >> android/key.properties
+          echo "keyAlias=${{ secrets.KEY_ALIAS }}" >> android/key.properties
+          echo "storeFile=release-keystore.jks" >> android/key.properties
 
-      # APK
-      - name: Build APK
-        run: flutter build apk --release
+      - name: Install Dependencies
+        run: flutter pub get
 
-      # Split APK
-      - name: Build Split APK
-        run: flutter build apk --split-per-abi --release
+      - name: Build All Formats
+        # Kết hợp build để giảm overhead khởi tạo
+        run: |
+          flutter build apk --release
+          flutter build apk --split-per-abi --release
+          flutter build appbundle --release
 
-      # 🔥 AAB (Play Store)
-      - name: Build AAB
-        run: flutter build appbundle --release
-
-      # Upload
-      - uses: actions/upload-artifact@v4
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
         with:
-          name: apk
-          path: build/app/outputs/flutter-apk/app-release.apk
+          name: flutter-builds
+          path: |
+            build/app/outputs/flutter-apk/app-release.apk
+            build/app/outputs/flutter-apk/*-release.apk
+            build/app/outputs/bundle/release/app-release.aab
+          retention-days: 7 # Tự động xóa sau 7 ngày để đỡ tốn bộ nhớ
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: split-apk
-          path: build/app/outputs/flutter-apk/*-release.apk
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: aab
-          path: build/app/outputs/bundle/release/app-release.aab
-
-  # ─── RELEASE ───────────────────────────────────
+  # ─── JOB 3: RELEASE (CHỈ KHI CÓ TAG) ────────────────────────
   release:
-    name: 🚀 Release
+    name: 🚀 Create Release
     needs: build
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
-
     permissions:
       contents: write
 
     steps:
-      - uses: actions/download-artifact@v4
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
         with:
-          name: apk
-          path: release
+          name: flutter-builds
+          path: artifacts
 
-      - uses: actions/download-artifact@v4
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2 # Version mới nhất
         with:
-          name: split-apk
-          path: release-split
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: aab
-          path: release-aab
-
-      - uses: softprops/action-gh-release@v1
-        with:
-          name: Release ${{ github.ref_name }}
+          name: 🚀 Production Release ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true # Tự động tạo changelog từ commit
           files: |
-            release/app-release.apk
-            release-split/*.apk
-            release-aab/app-release.aab
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            artifacts/app-release.apk
+            artifacts/*-release.apk
+            artifacts/app-release.aab
