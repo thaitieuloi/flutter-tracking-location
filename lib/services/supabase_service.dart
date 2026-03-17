@@ -55,10 +55,10 @@ class SupabaseService {
       }
       return user;
     } on AuthException catch (e) {
-      print('Auth error signing up: ${e.message}');
+      print('SupabaseService: Auth error signing up: ${e.message}');
       return null;
     } catch (e) {
-      print('Error signing up: $e');
+      print('SupabaseService: Error signing up: $e');
       return null;
     }
   }
@@ -72,17 +72,21 @@ class SupabaseService {
       );
       return response.user;
     } on AuthException catch (e) {
-      print('Auth error signing in: ${e.message}');
+      print('SupabaseService: Auth error signing in: ${e.message}');
       return null;
     } catch (e) {
-      print('Error signing in: $e');
+      print('SupabaseService: Error signing in: $e');
       return null;
     }
   }
 
   /// Sign out the current user.
   Future<void> signOut() async {
-    await _client.auth.signOut();
+    try {
+      await _client.auth.signOut();
+    } catch (e) {
+      print('SupabaseService: Error signing out: $e');
+    }
   }
 
   // ──────────────────────────────────────────────
@@ -102,7 +106,7 @@ class SupabaseService {
         return FamilyMember.fromMap(data);
       }
     } catch (e) {
-      print('Error getting user info: $e');
+      print('SupabaseService: Error getting user info: $e');
     }
     return null;
   }
@@ -115,7 +119,8 @@ class SupabaseService {
           .update({'is_location_sharing': enabled})
           .eq('id', userId);
     } catch (e) {
-      print('Error toggling location sharing: $e');
+      print('SupabaseService: Error toggling location sharing: $e');
+      rethrow;
     }
   }
 
@@ -137,7 +142,7 @@ class SupabaseService {
           .update({'last_seen': DateTime.now().toUtc().toIso8601String()})
           .eq('id', location.userId);
     } catch (e) {
-      print('Error updating location: $e');
+      print('SupabaseService: Error updating location: $e');
     }
   }
 
@@ -154,7 +159,7 @@ class SupabaseService {
         return UserLocation.fromMap(data);
       }
     } catch (e) {
-      print('Error getting user location: $e');
+      print('SupabaseService: Error getting user location: $e');
     }
     return null;
   }
@@ -184,11 +189,17 @@ class SupabaseService {
             value: familyId,
           ),
           callback: (payload) {
-            // Re-fetch all members on any change
+            // Re-fetch all members on any change to ensure data consistency
             _fetchFamilyMembers(familyId).then(onData);
           },
         )
-        .subscribe();
+        .subscribe((status, [error]) {
+          if (status == RealtimeSubscribeStatus.subscribed) {
+            print('SupabaseService: Subscribed to family members: $familyId');
+          } else if (status == RealtimeSubscribeStatus.channelError) {
+            print('SupabaseService: Channel error for family members: $error');
+          }
+        });
 
     return channel;
   }
@@ -204,7 +215,7 @@ class SupabaseService {
           .map((item) => FamilyMember.fromMap(item))
           .toList();
     } catch (e) {
-      print('Error fetching family members: $e');
+      print('SupabaseService: Error fetching family members: $e');
       return [];
     }
   }
@@ -280,7 +291,7 @@ class SupabaseService {
           .map((item) => SafeZone.fromMap(item))
           .toList();
     } catch (e) {
-      print('Error fetching safe zones: $e');
+      print('SupabaseService: Error fetching safe zones: $e');
       return [];
     }
   }
@@ -300,6 +311,7 @@ class SupabaseService {
           .maybeSingle();
 
       if (data == null) {
+        print('SupabaseService: User with email $email not found');
         return false;
       }
 
@@ -327,9 +339,10 @@ class SupabaseService {
             .eq('id', familyId);
       }
 
+      print('SupabaseService: Added $email to family $familyId');
       return true;
     } catch (e) {
-      print('Error adding family member: $e');
+      print('SupabaseService: Error adding family member: $e');
       return false;
     }
   }
@@ -343,7 +356,7 @@ class SupabaseService {
     try {
       await _client.from(safeZonesTable).upsert(zone.toMap());
     } catch (e) {
-      print('Error creating safe zone: $e');
+      print('SupabaseService: Error creating safe zone: $e');
     }
   }
 
@@ -352,7 +365,7 @@ class SupabaseService {
     try {
       await _client.from(safeZonesTable).delete().eq('id', zoneId);
     } catch (e) {
-      print('Error deleting safe zone: $e');
+      print('SupabaseService: Error deleting safe zone: $e');
     }
   }
 
@@ -362,11 +375,19 @@ class SupabaseService {
 
   /// Remove all realtime subscriptions.
   Future<void> removeAllChannels() async {
-    _client.removeAllChannels();
+    try {
+      await _client.removeAllChannels();
+    } catch (e) {
+      print('SupabaseService: Error removing channels: $e');
+    }
   }
 
   /// Remove a specific channel.
   Future<void> removeChannel(RealtimeChannel channel) async {
-    await _client.removeChannel(channel);
+    try {
+      await _client.removeChannel(channel);
+    } catch (e) {
+      print('SupabaseService: Error removing channel: $e');
+    }
   }
 }
