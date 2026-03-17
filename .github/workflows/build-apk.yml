@@ -51,6 +51,9 @@ jobs:
       - name: Install Dependencies
         run: flutter pub get
 
+      - name: Create dummy .env for analysis
+        run: touch .env
+
       - name: Static Analysis
         run: flutter analyze --no-fatal-infos
 
