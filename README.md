@@ -163,6 +163,10 @@ git push origin v1.0.0
 - Sử dụng GitHub Secrets cho CI/CD
 - Supabase RLS policies đã được cấu hình trong migration
 
+
+# Prompt:
+A simple, clean mobile app icon for a family tracking app. It should feature a stylized location pin or a group of happy family silhouettes inside a circle. Flat design, modern, blue and green color palette, white background. 512x512 resolution.
+
 ## 📄 License
 
 MIT License
