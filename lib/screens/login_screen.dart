@@ -96,7 +96,7 @@ class _LoginScreenState extends State<LoginScreen>
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
             colors: [
-              colorScheme.primary.withValues(alpha: 0.1),
+              colorScheme.primary.withOpacity(0.1),
               colorScheme.surface,
             ],
           ),
@@ -167,7 +167,7 @@ class _LoginScreenState extends State<LoginScreen>
                                       ),
                                       filled: true,
                                       fillColor: colorScheme.surfaceContainerHighest
-                                          .withValues(alpha: 0.3),
+                                          .withOpacity(0.3),
                                     ),
                                     validator: (value) {
                                       if (!_isLogin &&
@@ -193,7 +193,7 @@ class _LoginScreenState extends State<LoginScreen>
                           ),
                           filled: true,
                           fillColor:
-                              colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+                              colorScheme.surfaceContainerHighest.withOpacity(0.3),
                         ),
                         keyboardType: TextInputType.emailAddress,
                         validator: (value) {
@@ -231,7 +231,7 @@ class _LoginScreenState extends State<LoginScreen>
                           ),
                           filled: true,
                           fillColor:
-                              colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+                              colorScheme.surfaceContainerHighest.withOpacity(0.3),
                         ),
                         obscureText: _obscurePassword,
                         validator: (value) {

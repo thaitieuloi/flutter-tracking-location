@@ -72,7 +72,7 @@ class _MapScreenState extends State<MapScreen> {
           circleId: CircleId(zone.id),
           center: LatLng(zone.latitude, zone.longitude),
           radius: zone.radiusMeters,
-          fillColor: Colors.blue.withValues(alpha: 0.15),
+          fillColor: Colors.blue.withOpacity(0.15),
           strokeColor: Colors.blue.shade400,
           strokeWidth: 2,
         ),
@@ -394,7 +394,7 @@ class _MapScreenState extends State<MapScreen> {
                         return Card(
                           elevation: 0,
                           color: colorScheme.surfaceContainerHighest
-                              .withValues(alpha: 0.5),
+                              .withOpacity(0.5),
                           margin: const EdgeInsets.symmetric(vertical: 4),
                           child: ListTile(
                             leading: Stack(
