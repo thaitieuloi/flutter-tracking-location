@@ -7,6 +7,8 @@ environment:
   sdk: '>=3.0.0 <4.0.0'
 
 dependencies:
+
+  # Flutter
   flutter:
     sdk: flutter
 
@@ -15,7 +17,7 @@ dependencies:
 
   # Location & Maps
   google_maps_flutter: ^2.5.0
-  geolocator: ^10.1.0
+  geolocator: ^10.1.0 
   geocoding: ^2.1.1
 
   # State Management

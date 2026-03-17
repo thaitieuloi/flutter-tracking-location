@@ -9,20 +9,17 @@ class LocationService {
   StreamSubscription<Position>? _positionStream;
 
   /// Check and request location permissions.
-  /// Handles both foreground and background permissions for Android.
   Future<bool> requestLocationPermission() async {
     bool serviceEnabled;
     LocationPermission permission;
 
     serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
-      // Location services are not enabled don't continue
-      // accessing the position and request users of the 
-      // App to enable the location services.
       return false;
     }
 
     permission = await Geolocator.checkPermission();
+
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
       if (permission == LocationPermission.denied) {
@@ -31,13 +28,9 @@ class LocationService {
     }
 
     if (permission == LocationPermission.deniedForever) {
-      // Permissions are denied forever, handle appropriately. 
       return false;
     }
 
-    // For professional tracking, we ideally want "always" permission 
-    // especially on Android to keep tracking when the app is in background.
-    // Note: This often requires a separate request or specific user flow.
     return true;
   }
 
@@ -47,12 +40,14 @@ class LocationService {
       bool hasPermission = await requestLocationPermission();
       if (!hasPermission) return null;
 
+      final locationSettings = AndroidSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 10,
+        forceLocationManager: true,
+      );
+
       return await Geolocator.getCurrentPosition(
-        locationSettings: const AndroidSettings(
-          accuracy: LocationAccuracy.high,
-          distanceFilter: 10,
-          forceLocationManager: true,
-        ),
+        locationSettings: locationSettings,
       );
     } catch (e) {
       print('LocationService: Error getting location: $e');
@@ -73,16 +68,18 @@ class LocationService {
 
       if (placemarks.isNotEmpty) {
         Placemark place = placemarks[0];
-        // Senior tip: Format the address based on available components
+
         final components = [
           place.street,
           place.subLocality,
           place.locality,
-          place.administrativeArea
+          place.administrativeArea,
         ].where((c) => c != null && c.isNotEmpty).toList();
-        
+
         return components.join(', ');
       }
+    } on TimeoutException {
+      return null;
     } catch (e) {
       print('LocationService: Error getting address: $e');
     }
@@ -91,11 +88,11 @@ class LocationService {
 
   /// Create a position stream with optimized settings.
   Stream<Position> trackLocation() {
-    const LocationSettings locationSettings = AndroidSettings(
+    final locationSettings = AndroidSettings(
       accuracy: LocationAccuracy.high,
       distanceFilter: 10,
-      intervalDuration: Duration(seconds: 30),
-      foregroundNotificationConfig: ForegroundNotificationConfig(
+      intervalDuration: const Duration(seconds: 30),
+      foregroundNotificationConfig: const ForegroundNotificationConfig(
         notificationText: "Family Tracker is running in the background",
         notificationTitle: "Location Tracking Active",
         enableWakeLock: true,
@@ -108,7 +105,13 @@ class LocationService {
   }
 
   /// Start continuous location tracking.
-  void startTracking(Function(UserLocation) onLocationUpdate, String userId) {
+  void startTracking(
+    Function(UserLocation) onLocationUpdate,
+    String userId,
+  ) {
+    // 🔥 Prevent multiple subscriptions (memory leak fix)
+    stopTracking();
+
     _positionStream = trackLocation().listen((Position position) async {
       String? address = await getAddressFromCoordinates(
         position.latitude,
