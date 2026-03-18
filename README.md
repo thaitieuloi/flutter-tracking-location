@@ -167,6 +167,9 @@ git push origin v1.0.0
 # Prompt:
 A simple, clean mobile app icon for a family tracking app. It should feature a stylized location pin or a group of happy family silhouettes inside a circle. Flat design, modern, blue and green color palette, white background. 512x512 resolution.
 
+
+JAVA_HOME=$(/usr/libexec/java_home -v 17) flutter run
+
 ## 📄 License
 
 MIT License
