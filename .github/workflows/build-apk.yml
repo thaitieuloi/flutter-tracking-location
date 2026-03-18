@@ -60,12 +60,11 @@ jobs:
       - name: Unit Tests
         run: flutter test --no-pub
 
-  # ─── JOB 2: BUILD ARTIFACTS ────────────────────────────────
+# ─── JOB 2: BUILD ARTIFACT ────────────────────────────────
   build:
-    name: 🏗️ Build APK & AAB
+    name: 🏗️ Build Release APK
     needs: analyze
     runs-on: ubuntu-latest
-    # Chỉ build khi push vào main hoặc có tag v*
     if: github.event_name == 'push' 
     
     steps:
@@ -92,7 +91,7 @@ jobs:
       - name: Decode Keystore
         if: env.KEYSTORE_BASE64 != ''
         env:
-          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_BASE64: ${{ secrets.KEY_BASE64 }} # Kiểm tra lại tên secret của bạn
         run: |
           echo "$KEYSTORE_BASE64" | base64 --decode > android/app/release-keystore.jks
           echo "storePassword=${{ secrets.STORE_PASSWORD }}" > android/key.properties
@@ -103,22 +102,16 @@ jobs:
       - name: Install Dependencies
         run: flutter pub get
 
-      - name: Build All Formats
-        # Kết hợp build để giảm overhead khởi tạo
-        run: |
-          flutter build apk --release
-          flutter build apk --split-per-abi --release
-          flutter build appbundle --release
+      - name: Build Universal APK
+        # build apk (không có split) tạo ra 1 file duy nhất cho mọi kiến trúc chip
+        run: flutter build apk --release
 
-      - name: Upload Build Artifacts
+      - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: flutter-builds
-          path: |
-            build/app/outputs/flutter-apk/app-release.apk
-            build/app/outputs/flutter-apk/*-release.apk
-            build/app/outputs/bundle/release/app-release.aab
-          retention-days: 7 # Tự động xóa sau 7 ngày để đỡ tốn bộ nhớ
+          name: flutter-apk
+          path: build/app/outputs/flutter-apk/app-release.apk # Chỉ lấy 1 file này
+          retention-days: 7
 
   # ─── JOB 3: RELEASE (CHỈ KHI CÓ TAG) ────────────────────────
   release:
@@ -130,20 +123,17 @@ jobs:
       contents: write
 
     steps:
-      - name: Download Artifacts
+      - name: Download Artifact
         uses: actions/download-artifact@v4
         with:
-          name: flutter-builds
+          name: flutter-apk
           path: artifacts
 
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2 # Version mới nhất
+        uses: softprops/action-gh-release@v2
         with:
           name: 🚀 Production Release ${{ github.ref_name }}
           draft: false
           prerelease: false
-          generate_release_notes: true # Tự động tạo changelog từ commit
-          files: |
-            artifacts/app-release.apk
-            artifacts/*-release.apk
-            artifacts/app-release.aab
+          generate_release_notes: true
+          files: artifacts/app-release.apk # Chỉ đính kèm 1 file duy nhất
