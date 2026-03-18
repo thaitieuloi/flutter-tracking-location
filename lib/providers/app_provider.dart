@@ -4,106 +4,135 @@ import '../models/models.dart';
 import '../services/supabase_service.dart';
 import '../services/location_service.dart';
 
-/// Main application state provider.
-/// Manages auth state, family data, locations, and safe zones.
 class AppProvider extends ChangeNotifier {
-  final SupabaseService _supabaseService = SupabaseService();
-  final LocationService _locationService = LocationService();
+  final SupabaseService _svc = SupabaseService();
+  final LocationService _locationSvc = LocationService();
 
   FamilyMember? _currentUser;
+  String? _familyId;
+  String? _inviteCode;
   List<FamilyMember> _familyMembers = [];
   Map<String, UserLocation?> _memberLocations = {};
   List<SafeZone> _safeZones = [];
   bool _isLocationSharing = false;
   bool _isLoading = false;
 
-  // Realtime channel references for cleanup
   RealtimeChannel? _familyChannel;
+  RealtimeChannel? _geofencesChannel;
   final Map<String, RealtimeChannel> _locationChannels = {};
-  RealtimeChannel? _safeZonesChannel;
 
-  // Getters
-  FamilyMember? get currentUser => _currentUser;
-  List<FamilyMember> get familyMembers => _familyMembers;
-  Map<String, UserLocation?> get memberLocations => _memberLocations;
-  List<SafeZone> get safeZones => _safeZones;
-  bool get isLocationSharing => _isLocationSharing;
-  bool get isLoading => _isLoading;
+  FamilyMember?              get currentUser       => _currentUser;
+  String?                    get familyId          => _familyId;
+  String?                    get inviteCode        => _inviteCode;
+  List<FamilyMember>         get familyMembers     => _familyMembers;
+  Map<String, UserLocation?> get memberLocations   => _memberLocations;
+  List<SafeZone>             get safeZones         => _safeZones;
+  bool                       get isLocationSharing => _isLocationSharing;
+  bool                       get isLoading         => _isLoading;
 
-  /// Initialize app state - check if user is already logged in.
   Future<void> initialize() async {
-    final user = _supabaseService.currentUser;
+    final user = _svc.currentUser;
     if (user != null) {
+      _svc.log('🚀 [App] Auto-login for ${user.id}');
       await loadUserData(user.id);
+    } else {
+      _svc.log('🚀 [App] No session found, waiting for login');
     }
   }
 
-  /// Load all user data and setup realtime subscriptions.
   Future<void> loadUserData(String userId) async {
     _isLoading = true;
     notifyListeners();
 
     try {
-      _currentUser = await _supabaseService.getUserInfo(userId);
+      _svc.log('🔄 [App] loadUserData: $userId');
 
-      if (_currentUser != null) {
-        _isLocationSharing = _currentUser!.isLocationSharing;
+      // 1. Load user profile
+      _currentUser = await _svc.getUserInfo(userId);
 
-        // Subscribe to family members (realtime)
-        _familyChannel?.unsubscribe();
-        _familyChannel = _supabaseService.subscribeFamilyMembers(
-          familyId: _currentUser!.familyId,
-          onData: (members) {
-            _familyMembers = members;
-            notifyListeners();
+      if (_currentUser == null) {
+        _svc.log('⚠️ [App] User profile not in DB yet, this is normal for new users');
+        _isLoading = false;
+        notifyListeners();
+        return;
+      }
 
-            // Subscribe to each member's location
-            _subscribeToMemberLocations(members);
-          },
-        );
+      // 2. Get or create familyId (won't create new one if already has one)
+      _familyId = await _svc.getOrCreateFamilyId(userId, _currentUser!.name);
+      if (_familyId == null) {
+        _svc.log('❌ [App] Could not get or create familyId');
+        _isLoading = false;
+        notifyListeners();
+        return;
+      }
 
-        // Subscribe to safe zones (realtime)
-        _safeZonesChannel?.unsubscribe();
-        _safeZonesChannel = _supabaseService.subscribeSafeZones(
-          familyId: _currentUser!.familyId,
-          onData: (zones) {
-            _safeZones = zones;
-            notifyListeners();
-          },
-        );
+      // 3. Load invite code for this family
+      _inviteCode = await _svc.getInviteCode(_familyId!);
 
-        // Start location sharing if previously enabled
-        if (_isLocationSharing) {
-          startLocationSharing();
-        }
+      // 4. Refresh user info to get family_id populated
+      _currentUser = await _svc.getUserInfo(userId);
+
+      _isLocationSharing = _currentUser?.isLocationSharing ?? false;
+      _svc.log('✅ [App] User loaded: ${_currentUser?.name} | family: $_familyId | code: $_inviteCode | sharing: $_isLocationSharing');
+
+      // 5. Subscribe to family members (realtime)
+      _familyChannel?.unsubscribe();
+      _familyChannel = _svc.subscribeFamilyMembers(
+        familyId: _familyId!,
+        onData: (members) {
+          _svc.log('👥 [App] Family members updated: ${members.length}');
+          _familyMembers = members;
+          notifyListeners();
+          _subscribeToMemberLocations(members);
+        },
+      );
+
+      // 6. Subscribe to geofences (realtime)
+      _geofencesChannel?.unsubscribe();
+      _geofencesChannel = _svc.subscribeGeofences(
+        familyId: _familyId!,
+        onData: (zones) {
+          _svc.log('🔒 [App] Geofences updated: ${zones.length}');
+          _safeZones = zones;
+          notifyListeners();
+        },
+      );
+
+      // 7. Resume tracking if was active
+      if (_isLocationSharing) {
+        _svc.log('📍 [App] Resuming location sharing');
+        startLocationSharing();
       }
     } catch (e) {
-      print('Error loading user data: $e');
+      _svc.log('❌ [App] loadUserData error: $e');
     } finally {
       _isLoading = false;
       notifyListeners();
     }
   }
 
-  /// Subscribe to location updates for each family member.
   void _subscribeToMemberLocations(List<FamilyMember> members) {
-    for (var member in members) {
-      if (member.isLocationSharing && !_locationChannels.containsKey(member.id)) {
-        final channel = _supabaseService.subscribeMemberLocation(
+    for (final member in members) {
+      if (!_locationChannels.containsKey(member.id)) {
+        _svc.log('📡 [App] Subscribing to location for: ${member.name}');
+        final ch = _svc.subscribeMemberLocation(
           userId: member.id,
-          onData: (location) {
-            _memberLocations[member.id] = location;
+          onData: (loc) {
+            _memberLocations[member.id] = loc;
+            if (loc != null) {
+              _svc.log('📍 [App] ${member.name} at ${loc.latitude},${loc.longitude}');
+            }
             notifyListeners();
           },
         );
-        _locationChannels[member.id] = channel;
+        _locationChannels[member.id] = ch;
       }
     }
   }
 
-  /// Sign in with email and password.
   Future<bool> signIn(String email, String password) async {
-    final user = await _supabaseService.signIn(email, password);
+    _svc.log('🔐 [App] signIn: $email');
+    final user = await _svc.signIn(email, password);
     if (user != null) {
       await loadUserData(user.id);
       return true;
@@ -111,9 +140,9 @@ class AppProvider extends ChangeNotifier {
     return false;
   }
 
-  /// Sign up with email, password, and name.
-  Future<bool> signUp(String email, String password, String name) async {
-    final user = await _supabaseService.signUp(email, password, name);
+  Future<bool> signUp(String email, String password, String name, {String? inviteCode}) async {
+    _svc.log('🔐 [App] signUp: $email | code: ${inviteCode ?? 'none'}');
+    final user = await _svc.signUp(email, password, name, inviteCode: inviteCode);
     if (user != null) {
       await loadUserData(user.id);
       return true;
@@ -121,13 +150,14 @@ class AppProvider extends ChangeNotifier {
     return false;
   }
 
-  /// Sign out and clean up state.
   Future<void> signOut() async {
+    _svc.log('🔐 [App] signOut');
     stopLocationSharing();
     await _cleanupSubscriptions();
-    await _supabaseService.signOut();
-
+    await _svc.signOut();
     _currentUser = null;
+    _familyId = null;
+    _inviteCode = null;
     _familyMembers = [];
     _memberLocations = {};
     _safeZones = [];
@@ -135,89 +165,114 @@ class AppProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Enable location sharing.
   Future<void> startLocationSharing() async {
-    if (_currentUser == null) return;
+    if (_currentUser == null) {
+      _svc.log('⚠️ [App] startLocationSharing: no user, abort');
+      return;
+    }
 
-    bool hasPermission = await _locationService.requestLocationPermission();
-    if (!hasPermission) return;
+    final ok = await _locationSvc.requestLocationPermission();
+    if (!ok) {
+      _svc.log('❌ [App] Location permission denied');
+      return;
+    }
 
     _isLocationSharing = true;
-    await _supabaseService.toggleLocationSharing(_currentUser!.id, true);
+    await _svc.toggleLocationSharing(_currentUser!.id, true);
 
-    _locationService.startTracking((location) {
-      _supabaseService.updateUserLocation(location);
-    }, _currentUser!.id);
+    _locationSvc.startTracking((location) {
+      _svc.log('📍 [Tracking] New position: ${location.latitude}, ${location.longitude}');
+      _svc.updateUserLocation(location);
+      // Immediately update local state so marker moves without waiting realtime
+      _memberLocations[_currentUser!.id] = location;
+      notifyListeners();
+    }, _currentUser!.id, periodicSeconds: 30);
 
     notifyListeners();
+    _svc.log('✅ [App] Location sharing started (periodic: 30s)');
   }
 
-  /// Disable location sharing.
   Future<void> stopLocationSharing() async {
     if (_currentUser == null) return;
-
     _isLocationSharing = false;
-    await _supabaseService.toggleLocationSharing(_currentUser!.id, false);
-    _locationService.stopTracking();
+    await _svc.toggleLocationSharing(_currentUser!.id, false);
+    _locationSvc.stopTracking();
+    notifyListeners();
+    _svc.log('🛑 [App] Location sharing stopped');
+  }
+
+  Future<UserLocation?> getCurrentLocation() async {
+    if (_currentUser == null) return null;
+    final pos = await _locationSvc.getCurrentLocation();
+    if (pos == null) {
+      _svc.log('❌ [App] Could not get device position');
+      return null;
+    }
+    
+    _svc.log('✅ [App] Device position: ${pos.latitude}, ${pos.longitude}');
+    final loc = UserLocation(
+      userId: _currentUser!.id,
+      latitude: pos.latitude,
+      longitude: pos.longitude,
+      timestamp: DateTime.now().toUtc(),
+      accuracy: pos.accuracy,
+    );
+    
+    // Update local state immediately so marker shows on map
+    _memberLocations[_currentUser!.id] = loc;
+    notifyListeners();
+    
+    return loc;
+  }
+
+  Future<bool> addFamilyMember(String email) async {
+    if (_familyId == null) return false;
+    return await _svc.addFamilyMember(email, _familyId!);
+  }
+
+  /// Join a family by invite code (for already-logged-in user)
+  Future<bool> joinFamilyByCode(String inviteCode) async {
+    if (_currentUser == null) return false;
+    final ok = await _svc.joinFamilyByCode(_currentUser!.id, inviteCode);
+    if (ok) {
+      // Reload all data with new family
+      await loadUserData(_currentUser!.id);
+    }
+    return ok;
+  }
+
+  Future<List<UserLocation>> getLocationHistory(String userId, {int limit = 50}) async {
+    return await _svc.getLocationHistory(userId, limit: limit);
+  }
+
+  Future<void> createSafeZone(SafeZone zone) async {
+    await _svc.createGeofence(zone);
+  }
+
+  Future<void> deleteSafeZone(String zoneId) async {
+    await _svc.deleteGeofence(zoneId);
+  }
+
+  Future<void> updateProfile({String? name, String? photoUrl}) async {
+    if (_currentUser == null) return;
+    await _svc.updateProfile(userId: _currentUser!.id, name: name, photoUrl: photoUrl);
+    // Reload data to update local state
+    _currentUser = await _svc.getUserInfo(_currentUser!.id);
     notifyListeners();
   }
 
-  /// Add a family member by email.
-  Future<bool> addFamilyMember(String email) async {
-    if (_currentUser == null) return false;
-    return await _supabaseService.addFamilyMember(
-      email,
-      _currentUser!.familyId,
-    );
-  }
-
-  /// Create a new safe zone.
-  Future<void> createSafeZone(SafeZone zone) async {
-    await _supabaseService.createSafeZone(zone);
-  }
-
-  /// Delete a safe zone.
-  Future<void> deleteSafeZone(String zoneId) async {
-    await _supabaseService.deleteSafeZone(zoneId);
-  }
-
-  /// Get the current device location.
-  Future<UserLocation?> getCurrentLocation() async {
-    if (_currentUser == null) return null;
-
-    final position = await _locationService.getCurrentLocation();
-    if (position == null) return null;
-
-    final address = await _locationService.getAddressFromCoordinates(
-      position.latitude,
-      position.longitude,
-    );
-
-    return UserLocation(
-      userId: _currentUser!.id,
-      latitude: position.latitude,
-      longitude: position.longitude,
-      timestamp: DateTime.now().toUtc(),
-      accuracy: position.accuracy,
-      address: address,
-    );
-  }
-
-  /// Clean up all realtime subscriptions.
   Future<void> _cleanupSubscriptions() async {
     _familyChannel?.unsubscribe();
-    _safeZonesChannel?.unsubscribe();
-    for (var channel in _locationChannels.values) {
-      channel.unsubscribe();
-    }
+    _geofencesChannel?.unsubscribe();
+    for (final ch in _locationChannels.values) ch.unsubscribe();
     _locationChannels.clear();
-    await _supabaseService.removeAllChannels();
+    await _svc.removeAllChannels();
   }
 
   @override
   void dispose() {
     _cleanupSubscriptions();
-    _locationService.stopTracking();
+    _locationSvc.stopTracking();
     super.dispose();
   }
 }

@@ -1,393 +1,549 @@
 import 'dart:async';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:uuid/uuid.dart';
 import '../models/models.dart';
 
-/// Service layer for all Supabase operations.
-/// Replaces the previous FirebaseService with Supabase equivalents.
+/// SupabaseService aligned with actual DB schema:
+///   - users         (id, email, name, family_id, is_location_sharing, last_seen)
+///   - profiles      (id, user_id, display_name, avatar_url, push_token)
+///   - families      (id, name, created_by, invite_code)
+///   - family_members(id, user_id, family_id, role, joined_at)
+///   - user_locations(id, user_id, latitude, longitude, accuracy, timestamp)
+///   - latest_locations(user_id, latitude, longitude, accuracy, speed, heading, is_moving, updated_at)
+///   - geofences     (id, name, family_id, latitude, longitude, radius_meters, created_by)
 class SupabaseService {
   final SupabaseClient _client = Supabase.instance.client;
-  static const _uuid = Uuid();
 
-  // Table names (PostgreSQL convention: snake_case)
-  static const String usersTable = 'users';
-  static const String locationsTable = 'locations';
-  static const String familiesTable = 'families';
-  static const String safeZonesTable = 'safe_zones';
+  // ── Table names (actual DB) ──────────────────────────────
+  static const _tUsers          = 'users';
+  static const _tFamilies       = 'families';
+  static const _tFamilyMembers  = 'family_members';
+  static const _tUserLocations  = 'user_locations';
+  static const _tLatestLoc      = 'latest_locations';
+  static const _tGeofences      = 'geofences';
 
-  // ──────────────────────────────────────────────
-  // AUTH
-  // ──────────────────────────────────────────────
+  // ── Auth ─────────────────────────────────────────────────
 
   User? get currentUser => _client.auth.currentUser;
-
   Stream<AuthState> get authStateChanges => _client.auth.onAuthStateChange;
 
-  /// Sign up with email/password and create user profile + family.
-  Future<User?> signUp(String email, String password, String name) async {
+  Future<User?> signUp(String email, String password, String name, {String? inviteCode}) async {
     try {
-      final response = await _client.auth.signUp(
-        email: email,
-        password: password,
-        data: {'name': name},
-      );
+      log('🔐 [Auth] signUp: $email | inviteCode: ${inviteCode ?? 'none'}');
 
-      final user = response.user;
-      if (user != null) {
-        final familyId = _uuid.v4();
+      // Step 1: Create auth user
+      final res = await _client.auth.signUp(email: email, password: password, data: {'name': name});
+      final user = res.user;
+      if (user == null) return null;
+      log('✅ [Auth] Auth user created: ${user.id}');
 
-        // Create user profile
-        await _client.from(usersTable).upsert({
-          'id': user.id,
-          'name': name,
-          'email': email,
-          'family_id': familyId,
-          'is_location_sharing': false,
-        });
+      String? familyId;
+      String role = 'admin';
 
-        // Create family
-        await _client.from(familiesTable).insert({
-          'id': familyId,
+      // Step 2: Find or create family
+      if (inviteCode != null && inviteCode.trim().isNotEmpty) {
+        // Try to find family by invite code
+        log('🔑 [DB] Looking up family by invite_code: $inviteCode');
+        final familyRow = await _client
+            .from(_tFamilies)
+            .select('id, name')
+            .eq('invite_code', inviteCode.trim().toUpperCase())
+            .maybeSingle();
+
+        if (familyRow != null) {
+          familyId = familyRow['id'] as String;
+          role = 'member';
+          log('✅ [DB] Found family: ${familyRow['name']} ($familyId)');
+        } else {
+          log('⚠️ [DB] Invite code not found, creating new family');
+        }
+      }
+
+      if (familyId == null) {
+        // Create new family (generate a simple invite code)
+        final code = _generateInviteCode(name);
+        log('📝 [DB] Creating new family with invite_code: $code');
+        final familyRes = await _client.from(_tFamilies).insert({
           'name': '$name\'s Family',
           'created_by': user.id,
-          'members': [user.id],
-        });
+          'invite_code': code,
+        }).select('id').single();
+        familyId = familyRes['id'] as String;
+        log('✅ [DB] Family created: $familyId (code: $code)');
       }
+
+      // Step 3: Insert user with family_id
+      log('📝 [DB] Inserting user into users table');
+      await _client.from(_tUsers).upsert({
+        'id': user.id,
+        'email': email,
+        'name': name,
+        'family_id': familyId,
+        'is_location_sharing': true,
+      });
+      log('✅ [DB] User inserted | family: $familyId | role: $role');
+
+      // Step 4: Try to add to family_members (optional, RLS may block)
+      try {
+        await _client.from(_tFamilyMembers).upsert({
+          'user_id': user.id,
+          'family_id': familyId,
+          'role': role,
+        });
+        log('✅ [DB] Added to family_members as $role');
+      } catch (e) {
+        log('⚠️ [DB] family_members insert skipped (RLS): $e');
+      }
+
       return user;
-    } on AuthException catch (e) {
-      print('SupabaseService: Auth error signing up: ${e.message}');
-      return null;
     } catch (e) {
-      print('SupabaseService: Error signing up: $e');
+      log('❌ [Auth] signUp error: $e');
       return null;
     }
   }
 
-  /// Sign in with email/password.
+  String _generateInviteCode(String name) {
+    final prefix = name.length >= 3 ? name.substring(0, 3).toUpperCase() : name.toUpperCase();
+    final suffix = DateTime.now().millisecondsSinceEpoch.toString().substring(8);
+    return '$prefix$suffix';
+  }
+
   Future<User?> signIn(String email, String password) async {
     try {
-      final response = await _client.auth.signInWithPassword(
-        email: email,
-        password: password,
-      );
-      return response.user;
-    } on AuthException catch (e) {
-      print('SupabaseService: Auth error signing in: ${e.message}');
-      return null;
+      log('🔐 [Auth] signIn: $email');
+      final res = await _client.auth.signInWithPassword(email: email, password: password);
+      log('✅ [Auth] signIn success: ${res.user?.id}');
+      return res.user;
     } catch (e) {
-      print('SupabaseService: Error signing in: $e');
+      log('❌ [Auth] signIn error: $e');
       return null;
     }
   }
 
-  /// Sign out the current user.
   Future<void> signOut() async {
-    try {
-      await _client.auth.signOut();
-    } catch (e) {
-      print('SupabaseService: Error signing out: $e');
-    }
+    log('🔐 [Auth] signOut');
+    await _client.auth.signOut();
   }
 
-  // ──────────────────────────────────────────────
-  // USER OPERATIONS
-  // ──────────────────────────────────────────────
+  // ── User Info ────────────────────────────────────────────
 
-  /// Get user profile from the users table.
   Future<FamilyMember?> getUserInfo(String userId) async {
     try {
-      final data = await _client
-          .from(usersTable)
-          .select()
-          .eq('id', userId)
-          .maybeSingle();
-
-      if (data != null) {
-        return FamilyMember.fromMap(data);
+      log('📡 [DB] getUserInfo: $userId');
+      final data = await _client.from(_tUsers).select().eq('id', userId).maybeSingle();
+      if (data == null) {
+        log('⚠️ [DB] User not found in users table, will create profile');
+        return null;
       }
+      log('✅ [DB] getUserInfo: ${data['name']} | family_id=${data['family_id']}');
+      return _userRowToMember(data);
     } catch (e) {
-      print('SupabaseService: Error getting user info: $e');
+      log('❌ [DB] getUserInfo error: $e');
+      return null;
     }
-    return null;
   }
 
-  /// Toggle location sharing for a user.
   Future<void> toggleLocationSharing(String userId, bool enabled) async {
     try {
-      await _client
-          .from(usersTable)
-          .update({'is_location_sharing': enabled})
-          .eq('id', userId);
+      log('🔄 [DB] toggleLocationSharing: $userId -> $enabled');
+      await _client.from(_tUsers).update({'is_location_sharing': enabled}).eq('id', userId);
     } catch (e) {
-      print('SupabaseService: Error toggling location sharing: $e');
-      rethrow;
+      log('❌ [DB] toggleLocationSharing error: $e');
     }
   }
 
-  // ──────────────────────────────────────────────
-  // LOCATION OPERATIONS
-  // ──────────────────────────────────────────────
+  // ── Family ───────────────────────────────────────────────
 
-  /// Upsert user location (insert or update).
-  Future<void> updateUserLocation(UserLocation location) async {
+  /// FIX: Get existing family_id from DB. Create new family ONLY if user has none.
+  /// Do NOT create new family on each login — that was the root bug.
+  Future<String?> getOrCreateFamilyId(String userId, String userName) async {
     try {
-      await _client.from(locationsTable).upsert(
-        location.toMap(),
-        onConflict: 'user_id',
-      );
+      // Always read from DB first
+      final userData = await _client.from(_tUsers).select('family_id').eq('id', userId).maybeSingle();
+      String? familyId = userData?['family_id'] as String?;
 
-      // Update last_seen on user profile
-      await _client
-          .from(usersTable)
-          .update({'last_seen': DateTime.now().toUtc().toIso8601String()})
-          .eq('id', location.userId);
+      if (familyId != null && familyId.isNotEmpty) {
+        log('✅ [DB] Existing family_id: $familyId');
+        return familyId;
+      }
+
+      // Only create new family if user genuinely has no family_id
+      log('📝 [DB] No family found, creating new family for $userName');
+      final code = _generateInviteCode(userName);
+      final familyRes = await _client.from(_tFamilies).insert({
+        'name': '$userName\'s Family',
+        'created_by': userId,
+        'invite_code': code,
+      }).select('id').single();
+
+      familyId = familyRes['id'] as String;
+
+      // Link user to family
+      await _client.from(_tUsers).update({'family_id': familyId}).eq('id', userId);
+
+      // Try to add self to family_members
+      try {
+        await _client.from(_tFamilyMembers).upsert({
+          'user_id': userId,
+          'family_id': familyId,
+          'role': 'admin',
+        });
+      } catch (e) {
+        log('⚠️ [DB] family_members insert skipped (RLS): $e');
+      }
+
+      log('✅ [DB] Created family: $familyId (code: $code)');
+      return familyId;
     } catch (e) {
-      print('SupabaseService: Error updating location: $e');
+      log('❌ [DB] getOrCreateFamilyId error: $e');
+      return null;
     }
   }
 
-  /// Get location for a specific user (one-time fetch).
-  Future<UserLocation?> getUserLocation(String userId) async {
+  /// Get the invite code for a family
+  Future<String?> getInviteCode(String familyId) async {
     try {
-      final data = await _client
-          .from(locationsTable)
-          .select()
-          .eq('user_id', userId)
+      final row = await _client
+          .from(_tFamilies)
+          .select('invite_code, name')
+          .eq('id', familyId)
+          .maybeSingle();
+      return row?['invite_code'] as String?;
+    } catch (e) {
+      log('❌ [DB] getInviteCode error: $e');
+      return null;
+    }
+  }
+
+  /// Join an existing family using invite code (for logged-in user)
+  Future<bool> joinFamilyByCode(String userId, String inviteCode) async {
+    try {
+      log('🔑 [DB] joinFamilyByCode: $userId -> $inviteCode');
+      final familyRow = await _client
+          .from(_tFamilies)
+          .select('id, name')
+          .eq('invite_code', inviteCode.trim().toUpperCase())
           .maybeSingle();
 
-      if (data != null) {
-        return UserLocation.fromMap(data);
+      if (familyRow == null) {
+        log('⚠️ [DB] Family not found for code: $inviteCode');
+        return false;
       }
+
+      final familyId = familyRow['id'] as String;
+
+      // Update user's family_id
+      await _client.from(_tUsers).update({'family_id': familyId}).eq('id', userId);
+
+      // Add to family_members
+      try {
+        await _client.from(_tFamilyMembers).upsert({
+          'user_id': userId,
+          'family_id': familyId,
+          'role': 'member',
+        });
+      } catch (e) {
+        log('⚠️ [DB] family_members insert skipped (RLS): $e');
+      }
+
+      log('✅ [DB] joinFamilyByCode success: joined ${familyRow['name']}');
+      return true;
     } catch (e) {
-      print('SupabaseService: Error getting user location: $e');
+      log('❌ [DB] joinFamilyByCode error: $e');
+      return false;
     }
-    return null;
   }
 
-  // ──────────────────────────────────────────────
-  // REALTIME SUBSCRIPTIONS
-  // ──────────────────────────────────────────────
-
-  /// Subscribe to family members changes (realtime).
   RealtimeChannel subscribeFamilyMembers({
     required String familyId,
     required void Function(List<FamilyMember>) onData,
   }) {
-    // Initial fetch
+    log('📡 [Realtime] Subscribing to users by family: $familyId');
     _fetchFamilyMembers(familyId).then(onData);
 
-    // Realtime subscription
-    final channel = _client
-        .channel('family_members_$familyId')
+    return _client
+        .channel('users_family_$familyId')
         .onPostgresChanges(
           event: PostgresChangeEvent.all,
           schema: 'public',
-          table: usersTable,
+          table: _tUsers,
           filter: PostgresChangeFilter(
             type: PostgresChangeFilterType.eq,
             column: 'family_id',
             value: familyId,
           ),
-          callback: (payload) {
-            // Re-fetch all members on any change to ensure data consistency
-            _fetchFamilyMembers(familyId).then(onData);
-          },
+          callback: (_) => _fetchFamilyMembers(familyId).then(onData),
         )
         .subscribe((status, [error]) {
-          if (status == RealtimeSubscribeStatus.subscribed) {
-            print('SupabaseService: Subscribed to family members: $familyId');
-          } else if (status == RealtimeSubscribeStatus.channelError) {
-            print('SupabaseService: Channel error for family members: $error');
-          }
+          log('📡 [Realtime] users_family status=$status error=$error');
         });
-
-    return channel;
   }
 
   Future<List<FamilyMember>> _fetchFamilyMembers(String familyId) async {
     try {
-      final data = await _client
-          .from(usersTable)
+      log('📡 [DB] fetchFamilyMembers for family: $familyId');
+      // Query users directly by family_id (simpler, no RLS issues)
+      final rows = await _client
+          .from(_tUsers)
           .select()
           .eq('family_id', familyId);
 
-      return (data as List)
-          .map((item) => FamilyMember.fromMap(item))
-          .toList();
+      final members = (rows as List).map((row) => _userRowToMember(row)).toList();
+      log('✅ [DB] fetchFamilyMembers: ${members.length} members');
+      return members;
     } catch (e) {
-      print('SupabaseService: Error fetching family members: $e');
+      log('❌ [DB] fetchFamilyMembers error: $e');
       return [];
     }
   }
 
-  /// Subscribe to a member's location changes (realtime).
+  Future<bool> addFamilyMember(String email, String familyId) async {
+    try {
+      log('📝 [DB] addFamilyMember: $email to $familyId');
+      final userRow = await _client.from(_tUsers).select('id').eq('email', email).maybeSingle();
+      if (userRow == null) {
+        log('⚠️ [DB] addFamilyMember: user not found with email $email');
+        return false;
+      }
+      final memberId = userRow['id'] as String;
+      await _client.from(_tUsers).update({'family_id': familyId}).eq('id', memberId);
+      try {
+        await _client.from(_tFamilyMembers).upsert({'user_id': memberId, 'family_id': familyId, 'role': 'member'});
+      } catch (e) {
+        log('⚠️ [DB] family_members insert skipped (RLS): $e');
+      }
+      log('✅ [DB] addFamilyMember: $email added');
+      return true;
+    } catch (e) {
+      log('❌ [DB] addFamilyMember error: $e');
+      return false;
+    }
+  }
+
+  // ── Location ─────────────────────────────────────────────
+
+  Future<void> updateUserLocation(UserLocation location) async {
+    try {
+      log('📍 [DB] updateUserLocation: ${location.userId} lat=${location.latitude} lng=${location.longitude}');
+
+      // Insert into user_locations (history)
+      await _client.from(_tUserLocations).insert({
+        'user_id': location.userId,
+        'latitude': location.latitude,
+        'longitude': location.longitude,
+        'accuracy': location.accuracy,
+        'timestamp': location.timestamp.toIso8601String(),
+      });
+
+      // Upsert into latest_locations (for realtime view / dashboard)
+      await _client.from(_tLatestLoc).upsert({
+        'user_id': location.userId,
+        'latitude': location.latitude,
+        'longitude': location.longitude,
+        'accuracy': location.accuracy,
+        'updated_at': location.timestamp.toIso8601String(),
+      }, onConflict: 'user_id');
+
+      // Update last_seen on users table
+      await _client
+          .from(_tUsers)
+          .update({'last_seen': location.timestamp.toIso8601String()})
+          .eq('id', location.userId);
+
+      log('✅ [DB] Location saved to user_locations + latest_locations');
+    } catch (e) {
+      log('❌ [DB] updateUserLocation error: $e');
+    }
+  }
+
+  Future<UserLocation?> getUserLatestLocation(String userId) async {
+    try {
+      log('📡 [DB] getUserLatestLocation: $userId');
+      final data = await _client.from(_tLatestLoc).select().eq('user_id', userId).maybeSingle();
+      if (data == null) return null;
+      return UserLocation(
+        userId: userId,
+        latitude: (data['latitude'] as num).toDouble(),
+        longitude: (data['longitude'] as num).toDouble(),
+        timestamp: data['updated_at'] != null ? DateTime.parse(data['updated_at']) : DateTime.now(),
+        accuracy: (data['accuracy'] as num?)?.toDouble(),
+      );
+    } catch (e) {
+      log('❌ [DB] getUserLatestLocation error: $e');
+      return null;
+    }
+  }
+
+  /// Get location history for a user (last N records)
+  Future<List<UserLocation>> getLocationHistory(String userId, {int limit = 50}) async {
+    try {
+      log('📡 [DB] getLocationHistory: $userId (limit=$limit)');
+      final rows = await _client
+          .from(_tUserLocations)
+          .select('user_id, latitude, longitude, accuracy, timestamp')
+          .eq('user_id', userId)
+          .order('timestamp', ascending: false)
+          .limit(limit);
+
+      final list = (rows as List).map((r) => UserLocation(
+        userId: r['user_id'] ?? userId,
+        latitude: (r['latitude'] as num).toDouble(),
+        longitude: (r['longitude'] as num).toDouble(),
+        timestamp: DateTime.parse(r['timestamp']),
+        accuracy: (r['accuracy'] as num?)?.toDouble(),
+      )).toList();
+
+      log('✅ [DB] getLocationHistory: ${list.length} records');
+      return list;
+    } catch (e) {
+      log('❌ [DB] getLocationHistory error: $e');
+      return [];
+    }
+  }
+
   RealtimeChannel subscribeMemberLocation({
     required String userId,
     required void Function(UserLocation?) onData,
   }) {
-    // Initial fetch
-    getUserLocation(userId).then(onData);
+    log('📡 [Realtime] Subscribing to latest_locations for user: $userId');
+    getUserLatestLocation(userId).then(onData);
 
-    // Realtime subscription
-    final channel = _client
-        .channel('location_$userId')
+    return _client
+        .channel('latest_loc_$userId')
         .onPostgresChanges(
           event: PostgresChangeEvent.all,
           schema: 'public',
-          table: locationsTable,
+          table: _tLatestLoc,
           filter: PostgresChangeFilter(
             type: PostgresChangeFilterType.eq,
             column: 'user_id',
             value: userId,
           ),
           callback: (payload) {
+            log('📍 [Realtime] location update for $userId: ${payload.newRecord}');
             if (payload.newRecord.isNotEmpty) {
-              onData(UserLocation.fromMap(payload.newRecord));
+              onData(UserLocation(
+                userId: userId,
+                latitude: (payload.newRecord['latitude'] as num).toDouble(),
+                longitude: (payload.newRecord['longitude'] as num).toDouble(),
+                timestamp: payload.newRecord['updated_at'] != null
+                    ? DateTime.parse(payload.newRecord['updated_at'])
+                    : DateTime.now(),
+                accuracy: (payload.newRecord['accuracy'] as num?)?.toDouble(),
+              ));
             }
           },
         )
-        .subscribe();
-
-    return channel;
+        .subscribe((status, [error]) {
+          log('📡 [Realtime] latest_locations[$userId] status=$status error=$error');
+        });
   }
 
-  /// Subscribe to safe zones changes (realtime).
-  RealtimeChannel subscribeSafeZones({
+  // ── Geofences (Safe Zones) ───────────────────────────────
+
+  RealtimeChannel subscribeGeofences({
     required String familyId,
     required void Function(List<SafeZone>) onData,
   }) {
-    // Initial fetch
-    _fetchSafeZones(familyId).then(onData);
+    log('📡 [Realtime] Subscribing to geofences for family: $familyId');
+    _fetchGeofences(familyId).then(onData);
 
-    // Realtime subscription
-    final channel = _client
-        .channel('safe_zones_$familyId')
+    return _client
+        .channel('geofences_$familyId')
         .onPostgresChanges(
           event: PostgresChangeEvent.all,
           schema: 'public',
-          table: safeZonesTable,
+          table: _tGeofences,
           filter: PostgresChangeFilter(
             type: PostgresChangeFilterType.eq,
             column: 'family_id',
             value: familyId,
           ),
-          callback: (payload) {
-            _fetchSafeZones(familyId).then(onData);
-          },
+          callback: (_) => _fetchGeofences(familyId).then(onData),
         )
         .subscribe();
-
-    return channel;
   }
 
-  Future<List<SafeZone>> _fetchSafeZones(String familyId) async {
+  Future<List<SafeZone>> _fetchGeofences(String familyId) async {
     try {
-      final data = await _client
-          .from(safeZonesTable)
-          .select()
-          .eq('family_id', familyId);
-
-      return (data as List)
-          .map((item) => SafeZone.fromMap(item))
-          .toList();
+      final rows = await _client.from(_tGeofences).select().eq('family_id', familyId);
+      return (rows as List).map((r) => SafeZone(
+        id: r['id'].toString(),
+        name: r['name'] ?? '',
+        latitude: (r['latitude'] as num).toDouble(),
+        longitude: (r['longitude'] as num).toDouble(),
+        radiusMeters: (r['radius_meters'] as num?)?.toDouble() ?? 100.0,
+        familyId: r['family_id'] ?? familyId,
+      )).toList();
     } catch (e) {
-      print('SupabaseService: Error fetching safe zones: $e');
+      log('❌ [DB] fetchGeofences error: $e');
       return [];
     }
   }
 
-  // ──────────────────────────────────────────────
-  // FAMILY OPERATIONS
-  // ──────────────────────────────────────────────
-
-  /// Add a member to the family by email.
-  Future<bool> addFamilyMember(String email, String familyId) async {
+  Future<void> createGeofence(SafeZone zone) async {
     try {
-      // Find user by email
-      final data = await _client
-          .from(usersTable)
-          .select()
-          .eq('email', email)
-          .maybeSingle();
-
-      if (data == null) {
-        print('SupabaseService: User with email $email not found');
-        return false;
-      }
-
-      final userId = data['id'] as String;
-
-      // Update user's family_id
-      await _client
-          .from(usersTable)
-          .update({'family_id': familyId})
-          .eq('id', userId);
-
-      // Add to family members array
-      final familyData = await _client
-          .from(familiesTable)
-          .select('members')
-          .eq('id', familyId)
-          .single();
-
-      final members = List<String>.from(familyData['members'] ?? []);
-      if (!members.contains(userId)) {
-        members.add(userId);
-        await _client
-            .from(familiesTable)
-            .update({'members': members})
-            .eq('id', familyId);
-      }
-
-      print('SupabaseService: Added $email to family $familyId');
-      return true;
+      log('📝 [DB] createGeofence: ${zone.name}');
+      await _client.from(_tGeofences).insert({
+        'name': zone.name,
+        'family_id': zone.familyId,
+        'latitude': zone.latitude,
+        'longitude': zone.longitude,
+        'radius_meters': zone.radiusMeters,
+        'created_by': currentUser?.id,
+      });
+      log('✅ [DB] createGeofence: ${zone.name}');
     } catch (e) {
-      print('SupabaseService: Error adding family member: $e');
-      return false;
+      log('❌ [DB] createGeofence error: $e');
     }
   }
 
-  // ──────────────────────────────────────────────
-  // SAFE ZONE OPERATIONS
-  // ──────────────────────────────────────────────
-
-  /// Create a new safe zone.
-  Future<void> createSafeZone(SafeZone zone) async {
+  Future<void> deleteGeofence(String geofenceId) async {
     try {
-      await _client.from(safeZonesTable).upsert(zone.toMap());
+      await _client.from(_tGeofences).delete().eq('id', geofenceId);
+      log('✅ [DB] deleteGeofence: $geofenceId');
     } catch (e) {
-      print('SupabaseService: Error creating safe zone: $e');
+      log('❌ [DB] deleteGeofence error: $e');
     }
   }
 
-  /// Delete a safe zone by ID.
-  Future<void> deleteSafeZone(String zoneId) async {
-    try {
-      await _client.from(safeZonesTable).delete().eq('id', zoneId);
-    } catch (e) {
-      print('SupabaseService: Error deleting safe zone: $e');
-    }
-  }
+  // ── Cleanup ──────────────────────────────────────────────
 
-  // ──────────────────────────────────────────────
-  // CLEANUP
-  // ──────────────────────────────────────────────
-
-  /// Remove all realtime subscriptions.
   Future<void> removeAllChannels() async {
+    await _client.removeAllChannels();
+  }
+
+  // ── Helpers ──────────────────────────────────────────────
+
+  FamilyMember _userRowToMember(Map<String, dynamic> data) {
+    return FamilyMember(
+      id: data['id'] ?? '',
+      name: data['name'] ?? 'Unknown',
+      email: data['email'] ?? '',
+      photoUrl: data['photo_url'],
+      familyId: data['family_id'] ?? '',
+      isLocationSharing: data['is_location_sharing'] ?? false,
+      lastSeen: data['last_seen'] != null ? DateTime.tryParse(data['last_seen'].toString()) : null,
+    );
+  }
+
+  Future<void> updateProfile({required String userId, String? name, String? photoUrl}) async {
     try {
-      await _client.removeAllChannels();
+      log('🔄 [DB] updateProfile: $userId');
+      final updates = <String, dynamic>{};
+      if (name != null) updates['name'] = name;
+      if (photoUrl != null) updates['photo_url'] = photoUrl;
+
+      if (updates.isEmpty) return;
+
+      await _client.from(_tUsers).update(updates).eq('id', userId);
+      log('✅ [DB] updateProfile success');
     } catch (e) {
-      print('SupabaseService: Error removing channels: $e');
+      log('❌ [DB] updateProfile error: $e');
     }
   }
 
-  /// Remove a specific channel.
-  Future<void> removeChannel(RealtimeChannel channel) async {
-    try {
-      await _client.removeChannel(channel);
-    } catch (e) {
-      print('SupabaseService: Error removing channel: $e');
-    }
+  void log(String message) {
+    // ignore: avoid_print
+    print(message);
   }
 }

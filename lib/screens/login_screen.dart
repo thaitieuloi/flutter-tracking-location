@@ -15,6 +15,7 @@ class _LoginScreenState extends State<LoginScreen>
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _nameController = TextEditingController();
+  final _inviteCodeController = TextEditingController();
   bool _isLogin = true;
   bool _isLoading = false;
   bool _obscurePassword = true;
@@ -40,6 +41,7 @@ class _LoginScreenState extends State<LoginScreen>
     _emailController.dispose();
     _passwordController.dispose();
     _nameController.dispose();
+    _inviteCodeController.dispose();
     _animController.dispose();
     super.dispose();
   }
@@ -58,14 +60,16 @@ class _LoginScreenState extends State<LoginScreen>
         _passwordController.text,
       );
     } else {
+      final code = _inviteCodeController.text.trim();
       success = await provider.signUp(
         _emailController.text.trim(),
         _passwordController.text,
         _nameController.text.trim(),
+        inviteCode: code.isNotEmpty ? code : null,
       );
     }
 
-    setState(() => _isLoading = false);
+    if (mounted) setState(() => _isLoading = false);
 
     if (!success && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -73,7 +77,7 @@ class _LoginScreenState extends State<LoginScreen>
           content: Text(
             _isLogin
                 ? 'Đăng nhập thất bại. Kiểm tra lại email và mật khẩu.'
-                : 'Đăng ký thất bại. Email có thể đã được sử dụng.',
+                : 'Đăng ký thất bại. Email có thể đã được sử dụng hoặc mã gia đình không đúng.',
           ),
           backgroundColor: Colors.red.shade700,
           behavior: SnackBarBehavior.floating,
@@ -149,7 +153,7 @@ class _LoginScreenState extends State<LoginScreen>
                       ),
                       const SizedBox(height: 48),
 
-                      // Name field (only for sign up)
+                      // Name + Invite Code fields (only for sign up)
                       AnimatedSize(
                         duration: const Duration(milliseconds: 300),
                         curve: Curves.easeInOut,
@@ -176,6 +180,23 @@ class _LoginScreenState extends State<LoginScreen>
                                       }
                                       return null;
                                     },
+                                  ),
+                                  const SizedBox(height: 16),
+                                  TextFormField(
+                                    controller: _inviteCodeController,
+                                    textCapitalization: TextCapitalization.characters,
+                                    decoration: InputDecoration(
+                                      labelText: 'Mã gia đình (tuỳ chọn)',
+                                      hintText: 'Để trống nếu tạo gia đình mới',
+                                      prefixIcon: const Icon(Icons.group_add_outlined),
+                                      border: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                      filled: true,
+                                      fillColor: colorScheme.surfaceContainerHighest
+                                          .withOpacity(0.3),
+                                      helperText: 'Nhập mã để tham gia gia đình có sẵn',
+                                    ),
                                   ),
                                   const SizedBox(height: 16),
                                 ],

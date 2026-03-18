@@ -7,6 +7,7 @@ import '../models/models.dart';
 /// This service is independent of the backend (Supabase/Firebase).
 class LocationService {
   StreamSubscription<Position>? _positionStream;
+  Timer? _periodicTimer;
 
   /// Check and request location permissions.
   Future<bool> requestLocationPermission() async {
@@ -85,11 +86,11 @@ class LocationService {
   Stream<Position> trackLocation() {
     final locationSettings = AndroidSettings(
       accuracy: LocationAccuracy.high,
-      distanceFilter: 10,
-      intervalDuration: const Duration(seconds: 30),
+      distanceFilter: 10, // update khi di chuyển >= 10m
+      intervalDuration: const Duration(seconds: 15),
       foregroundNotificationConfig: const ForegroundNotificationConfig(
-        notificationText: "Family Tracker is running in the background",
-        notificationTitle: "Location Tracking Active",
+        notificationText: "Family Tracker đang chạy nền",
+        notificationTitle: "Chia sẻ vị trí đang bật",
         enableWakeLock: true,
       ),
     );
@@ -100,36 +101,63 @@ class LocationService {
   }
 
   /// Start continuous location tracking.
+  /// - Stream-based: gửi khi di chuyển >= 10m
+  /// - Timer-based: gửi định kỳ mỗi [periodicSeconds] giây dù không di chuyển
   void startTracking(
     Function(UserLocation) onLocationUpdate,
-    String userId,
-  ) {
+    String userId, {
+    int periodicSeconds = 30,
+  }) {
     // 🔥 Prevent multiple subscriptions (memory leak fix)
     stopTracking();
 
+    // 1. Subscribe to position stream (khi di chuyển)
     _positionStream = trackLocation().listen((Position position) async {
-      String? address = await getAddressFromCoordinates(
-        position.latitude,
-        position.longitude,
-      );
-
-      UserLocation location = UserLocation(
-        userId: userId,
-        latitude: position.latitude,
-        longitude: position.longitude,
-        timestamp: DateTime.now().toUtc(),
-        accuracy: position.accuracy,
-        address: address,
-      );
-
+      final location = await _positionToUserLocation(position, userId);
       onLocationUpdate(location);
     });
+
+    // 2. Periodic timer – gửi định kỳ mỗi [periodicSeconds] giây
+    _periodicTimer = Timer.periodic(Duration(seconds: periodicSeconds), (_) async {
+      try {
+        final position = await Geolocator.getCurrentPosition(
+          desiredAccuracy: LocationAccuracy.high,
+          forceAndroidLocationManager: true,
+        );
+        final location = await _positionToUserLocation(position, userId);
+        onLocationUpdate(location);
+        print('📍 [LocationService] Periodic heartbeat sent: ${position.latitude}, ${position.longitude}');
+      } catch (e) {
+        print('LocationService: Periodic update error: $e');
+      }
+    });
+
+    print('✅ [LocationService] Tracking started (stream + periodic every ${periodicSeconds}s)');
+  }
+
+  Future<UserLocation> _positionToUserLocation(Position position, String userId) async {
+    String? address = await getAddressFromCoordinates(
+      position.latitude,
+      position.longitude,
+    );
+
+    return UserLocation(
+      userId: userId,
+      latitude: position.latitude,
+      longitude: position.longitude,
+      timestamp: DateTime.now().toUtc(),
+      accuracy: position.accuracy,
+      address: address,
+    );
   }
 
   /// Stop location tracking.
   void stopTracking() {
     _positionStream?.cancel();
     _positionStream = null;
+    _periodicTimer?.cancel();
+    _periodicTimer = null;
+    print('🛑 [LocationService] Tracking stopped');
   }
 
   /// Calculate distance between two points in meters.
