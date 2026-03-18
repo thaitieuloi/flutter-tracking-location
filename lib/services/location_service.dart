@@ -8,6 +8,8 @@ import '../models/models.dart';
 class LocationService {
   StreamSubscription<Position>? _positionStream;
   Timer? _periodicTimer;
+  Position? _lastSentPosition;
+  DateTime? _lastSentTime;
 
   /// Check and request location permissions.
   Future<bool> requestLocationPermission() async {
@@ -117,16 +119,21 @@ class LocationService {
       onLocationUpdate(location);
     });
 
-    // 2. Periodic timer – gửi định kỳ mỗi [periodicSeconds] giây
+    // 2. Periodic timer – gửi định kỳ (Smart Heartbeat)
     _periodicTimer = Timer.periodic(Duration(seconds: periodicSeconds), (_) async {
       try {
         final position = await Geolocator.getCurrentPosition(
           desiredAccuracy: LocationAccuracy.high,
           forceAndroidLocationManager: true,
         );
-        final location = await _positionToUserLocation(position, userId);
-        onLocationUpdate(location);
-        print('📍 [LocationService] Periodic heartbeat sent: ${position.latitude}, ${position.longitude}');
+
+        if (_shouldUpdate(position)) {
+          final location = await _positionToUserLocation(position, userId);
+          onLocationUpdate(location);
+          _lastSentPosition = position;
+          _lastSentTime = DateTime.now();
+          print('📍 [LocationService] Heartbeat sent (Moved or Timeout): ${position.latitude}, ${position.longitude}');
+        }
       } catch (e) {
         print('LocationService: Periodic update error: $e');
       }
@@ -149,6 +156,27 @@ class LocationService {
       accuracy: position.accuracy,
       address: address,
     );
+  }
+
+  bool _shouldUpdate(Position current) {
+    if (_lastSentPosition == null || _lastSentTime == null) return true;
+
+    final distance = Geolocator.distanceBetween(
+      _lastSentPosition!.latitude,
+      _lastSentPosition!.longitude,
+      current.latitude,
+      current.longitude,
+    );
+
+    final timeDiff = DateTime.now().difference(_lastSentTime!).inSeconds;
+
+    // Thuật toán: 
+    // - Nếu di chuyển > 30m thì gửi.
+    // - Nếu đứng yên nhưng quá 5 phút (300s) thì gửi 1 lần để báo vẫn online.
+    if (distance > 30) return true;
+    if (timeDiff > 300) return true;
+
+    return false;
   }
 
   /// Stop location tracking.

@@ -170,6 +170,10 @@ A simple, clean mobile app icon for a family tracking app. It should feature a s
 
 JAVA_HOME=$(/usr/libexec/java_home -v 17) flutter run
 
+
+# KEY
+gg map: AIzaSyDdE5ohyxRpG0KK7D2yc0eoEApe5up7Z34
+
 ## 📄 License
 
 MIT License

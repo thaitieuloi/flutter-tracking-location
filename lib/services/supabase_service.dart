@@ -30,68 +30,25 @@ class SupabaseService {
     try {
       log('🔐 [Auth] signUp: $email | inviteCode: ${inviteCode ?? 'none'}');
 
-      // Step 1: Create auth user
-      final res = await _client.auth.signUp(email: email, password: password, data: {'name': name});
+      // Step 1: Create auth user (include invite_code for the DB trigger to handle)
+      final res = await _client.auth.signUp(
+        email: email, 
+        password: password, 
+        data: {
+          'name': name,
+          'invite_code': inviteCode,
+        }
+      );
       final user = res.user;
       if (user == null) return null;
       log('✅ [Auth] Auth user created: ${user.id}');
 
-      String? familyId;
-      String role = 'admin';
-
-      // Step 2: Find or create family
-      if (inviteCode != null && inviteCode.trim().isNotEmpty) {
-        // Try to find family by invite code
-        log('🔑 [DB] Looking up family by invite_code: $inviteCode');
-        final familyRow = await _client
-            .from(_tFamilies)
-            .select('id, name')
-            .eq('invite_code', inviteCode.trim().toUpperCase())
-            .maybeSingle();
-
-        if (familyRow != null) {
-          familyId = familyRow['id'] as String;
-          role = 'member';
-          log('✅ [DB] Found family: ${familyRow['name']} ($familyId)');
-        } else {
-          log('⚠️ [DB] Invite code not found, creating new family');
-        }
-      }
-
-      if (familyId == null) {
-        // Create new family (generate a simple invite code)
-        final code = _generateInviteCode(name);
-        log('📝 [DB] Creating new family with invite_code: $code');
-        final familyRes = await _client.from(_tFamilies).insert({
-          'name': '$name\'s Family',
-          'created_by': user.id,
-          'invite_code': code,
-        }).select('id').single();
-        familyId = familyRes['id'] as String;
-        log('✅ [DB] Family created: $familyId (code: $code)');
-      }
-
-      // Step 3: Insert user with family_id
-      log('📝 [DB] Inserting user into users table');
-      await _client.from(_tUsers).upsert({
-        'id': user.id,
-        'email': email,
-        'name': name,
-        'family_id': familyId,
-        'is_location_sharing': true,
-      });
-      log('✅ [DB] User inserted | family: $familyId | role: $role');
-
-      // Step 4: Try to add to family_members (optional, RLS may block)
-      try {
-        await _client.from(_tFamilyMembers).upsert({
-          'user_id': user.id,
-          'family_id': familyId,
-          'role': role,
-        });
-        log('✅ [DB] Added to family_members as $role');
-      } catch (e) {
-        log('⚠️ [DB] family_members insert skipped (RLS): $e');
+      // The rest of the setup (profiles, users, family membership if inviteCode exists) 
+      // is now handled automatically by the Supabase DB Trigger.
+      
+      // We only need to handle NEW family creation if no invite code was provided
+      if (inviteCode == null || inviteCode.trim().isEmpty) {
+        log('📝 [DB] No invite code, will create fresh family later in getOrCreateFamilyId');
       }
 
       return user;

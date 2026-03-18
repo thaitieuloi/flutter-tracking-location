@@ -861,13 +861,14 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                           ),
                           title: Text(member.name),
                           subtitle: Text(
-                            member.isLocationSharing
-                                ? loc != null
-                                    ? '📍 ${_timeAgo(loc.timestamp)}'
-                                    : '📡 Đang kết nối...'
-                                : '📵 Không chia sẻ vị trí',
-                            style: const TextStyle(fontSize: 12),
+                          loc != null
+                              ? '${loc.address ?? '📍 ${loc.latitude.toStringAsFixed(4)}, ${loc.longitude.toStringAsFixed(4)}'}\n🕒 ${_timeAgo(loc.timestamp)}'
+                              : '📵 Chưa có vị trí',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: member.isLocationSharing ? null : Colors.grey,
                           ),
+                        ),
                           trailing: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
