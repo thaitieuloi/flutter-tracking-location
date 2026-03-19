@@ -6,6 +6,8 @@ import '../models/models.dart';
 import '../widgets/map_adapter/map_adapter.dart';
 import '../widgets/map_adapter/leaflet_adapter.dart';
 import 'location_history_screen.dart';
+import 'notifications_screen.dart';
+import 'chat_screen.dart';
 
 class MapScreen extends StatefulWidget {
   const MapScreen({Key? key}) : super(key: key);
@@ -59,23 +61,34 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     return Scaffold(
       appBar: AppBar(
         title: Consumer<AppProvider>(
-          builder: (context, provider, _) => Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('Family Tracker', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-              if (provider.familyMembers.isNotEmpty)
-                Text(
-                  '${provider.familyMembers.length} thành viên',
-                  style: TextStyle(fontSize: 12, color: colorScheme.onSurfaceVariant),
-                ),
-            ],
+          builder: (context, provider, _) => Flexible(
+            child: GestureDetector(
+              onTap: _showFamilyMembersSheet,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    provider.familyName.isEmpty ? 'Together Home' : provider.familyName,
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  if (provider.familyMembers.isNotEmpty)
+                    Text(
+                      '${provider.familyMembers.length} thành viên',
+                      style: TextStyle(fontSize: 12, color: colorScheme.onSurfaceVariant),
+                    ),
+                ],
+              ),
+            ),
           ),
         ),
         backgroundColor: colorScheme.surface,
         foregroundColor: colorScheme.onSurface,
         elevation: 0,
         actions: [
-          _buildLocationToggle(),
+          _buildNotificationBadge(),
           _buildMyPositionButton(),
           _buildMoreMenu(),
         ],
@@ -102,6 +115,12 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                   right: 12,
                   child: _buildInviteCodeBanner(provider.inviteCode!, colorScheme),
                 ),
+              // SOS button at bottom-left
+              Positioned(
+                bottom: 24,
+                left: 16,
+                child: _buildSosButton(colorScheme),
+              ),
             ],
           );
         },
@@ -128,14 +147,16 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
           children: [
             Icon(Icons.group, size: 18, color: colorScheme.primary),
             const SizedBox(width: 8),
-            Text('Mã gia đình: ', style: TextStyle(fontSize: 13, color: colorScheme.onSurfaceVariant)),
-            Text(
-              code,
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.bold,
-                color: colorScheme.primary,
-                letterSpacing: 1.5,
+            Flexible(
+              child: Text(
+                'Mã: $code', 
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 13, 
+                  fontWeight: FontWeight.bold,
+                  color: colorScheme.primary,
+                  letterSpacing: 1.2,
+                ),
               ),
             ),
             const SizedBox(width: 8),
@@ -163,6 +184,77 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     );
   }
 
+  // ── SOS Button ───────────────────────────────────────────
+
+  Widget _buildSosButton(ColorScheme colorScheme) {
+    return GestureDetector(
+      onLongPress: () => _handleSos(),
+      child: Container(
+        width: 64,
+        height: 64,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          gradient: const LinearGradient(
+            colors: [Color(0xFFFF5252), Color(0xFFD32F2F)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.red.withOpacity(0.4),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: const Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.sos, color: Colors.white, size: 24),
+            Text('Giữ', style: TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _handleSos() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        icon: const Icon(Icons.sos, color: Colors.red, size: 48),
+        title: const Text('Gửi SOS?', style: TextStyle(fontWeight: FontWeight.bold)),
+        content: const Text(
+          'Tín hiệu SOS sẽ được gửi đến tất cả thành viên gia đình kèm vị trí hiện tại của bạn.',
+          textAlign: TextAlign.center,
+        ),
+        actionsAlignment: MainAxisAlignment.center,
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Hủy'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('GỬI SOS'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && mounted) {
+      final provider = Provider.of<AppProvider>(context, listen: false);
+      final ok = await provider.sendSos();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(ok ? '🚨 SOS đã được gửi!' : '❌ Không thể gửi SOS'),
+          backgroundColor: ok ? Colors.red : Colors.grey,
+        ));
+      }
+    }
+  }
+
   // ── Map Elements Builders ────────────────────────────────
 
   List<AppMapCircle> _buildCircles(AppProvider provider) {
@@ -180,16 +272,12 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   List<AppMapMarker> _buildMarkers(AppProvider provider) {
     final markers = <AppMapMarker>[];
 
-    // Family members - show all with location
     for (var member in provider.familyMembers) {
       final isCurrentUser = member.id == provider.currentUser?.id;
       var loc = provider.memberLocations[member.id];
       
-      // FALLBACK: If current user doesn't have a location in provider.memberLocations yet,
-      // it might not show. We can skip other members without loc, but show current user if possible.
       if (loc == null) {
         if (!isCurrentUser) continue;
-        // Don't skip current user, try to use a default or wait for location
         continue; 
       }
 
@@ -208,7 +296,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       ));
     }
 
-    // Safe Zone icons
     for (var zone in provider.safeZones) {
       markers.add(AppMapMarker(
         id: 'zone_ic_${zone.id}',
@@ -231,12 +318,10 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
 
   // ── Marker Widgets ───────────────────────────────────────
 
-  /// Current user marker with pulsing animation
   Widget _buildCurrentUserMarker(FamilyMember member, double pulseValue) {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        // Name tag
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
           decoration: BoxDecoration(
@@ -249,19 +334,24 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
             children: [
               const Icon(Icons.person, size: 10, color: Colors.white),
               const SizedBox(width: 3),
-              Text(
-                member.name,
-                style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.white),
+              Flexible(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 80),
+                  child: Text(
+                    member.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.white),
+                  ),
+                ),
               ),
             ],
           ),
         ),
         const SizedBox(height: 3),
-        // Pulsing marker
         Stack(
           alignment: Alignment.center,
           children: [
-            // Outer pulse ring
             Container(
               width: 44 * pulseValue,
               height: 44 * pulseValue,
@@ -270,7 +360,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                 shape: BoxShape.circle,
               ),
             ),
-            // Inner ring
             Container(
               width: 32,
               height: 32,
@@ -279,7 +368,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                 shape: BoxShape.circle,
               ),
             ),
-            // Core dot
             Container(
               width: 22,
               height: 22,
@@ -321,12 +409,10 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     );
   }
 
-  /// Family member marker (static, red)
   Widget _buildFamilyMemberMarker(FamilyMember member) {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        // Name tag
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
           decoration: BoxDecoration(
@@ -335,17 +421,21 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
             boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.15), blurRadius: 6, offset: const Offset(0, 2))],
             border: Border.all(color: _familyMemberColor.withOpacity(0.3)),
           ),
-          child: Text(
-            member.name,
-            style: TextStyle(
-              fontSize: 10,
-              fontWeight: FontWeight.bold,
-              color: _familyMemberColor,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 80),
+            child: Text(
+              member.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.bold,
+                color: _familyMemberColor,
+              ),
             ),
           ),
         ),
         const SizedBox(height: 3),
-        // Avatar marker
         Stack(
           alignment: Alignment.center,
           children: [
@@ -370,7 +460,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
             ),
           ],
         ),
-        // Down pointer
         CustomPaint(
           size: const Size(10, 6),
           painter: _TrianglePainter(color: _familyMemberColor),
@@ -392,6 +481,43 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         onPressed: () => provider.isLocationSharing
             ? provider.stopLocationSharing()
             : provider.startLocationSharing(),
+      ),
+    );
+  }
+
+  Widget _buildNotificationBadge() {
+    return Consumer<AppProvider>(
+      builder: (context, provider, _) => Stack(
+        children: [
+          IconButton(
+            icon: const Icon(Icons.notifications_outlined),
+            tooltip: 'Thông báo',
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const NotificationsScreen()),
+            ),
+          ),
+          if (provider.unreadNotificationCount > 0)
+            Positioned(
+              right: 6,
+              top: 6,
+              child: Container(
+                padding: const EdgeInsets.all(4),
+                decoration: const BoxDecoration(
+                  color: Colors.red,
+                  shape: BoxShape.circle,
+                ),
+                constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
+                child: Text(
+                  provider.unreadNotificationCount > 99
+                      ? '99+'
+                      : '${provider.unreadNotificationCount}',
+                  style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }
@@ -418,9 +544,35 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
             _showJoinFamilyDialog();
           } else if (value == 'add_member') {
             _showAddMemberDialog();
+          } else if (value == 'chat') {
+            Navigator.push(context, MaterialPageRoute(builder: (_) => const ChatScreen()));
+          } else if (value == 'location_toggle') {
+            provider.isLocationSharing 
+                ? provider.stopLocationSharing() 
+                : provider.startLocationSharing();
           }
         },
         itemBuilder: (context) => [
+          const PopupMenuItem(
+            value: 'chat',
+            child: Row(children: [
+              Icon(Icons.chat_bubble_outline, size: 20),
+              SizedBox(width: 8),
+              Text('Chat gia đình'),
+            ]),
+          ),
+          PopupMenuItem(
+            value: 'location_toggle',
+            child: Row(children: [
+              Icon(
+                provider.isLocationSharing ? Icons.location_on : Icons.location_off_outlined,
+                size: 20,
+                color: provider.isLocationSharing ? Colors.green : null,
+              ),
+              const SizedBox(width: 8),
+              Text(provider.isLocationSharing ? 'Tắt chia sẻ vị trí' : 'Bật chia sẻ vị trí'),
+            ]),
+          ),
           const PopupMenuItem(
             value: 'join_family',
             child: Row(children: [
@@ -491,10 +643,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Handle bar
             Container(width: 40, height: 4, decoration: BoxDecoration(color: colorScheme.outlineVariant, borderRadius: BorderRadius.circular(2))),
             const SizedBox(height: 20),
-            // Avatar
             Stack(
               children: [
                 CircleAvatar(
@@ -523,7 +673,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
             Text(member.email, style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 13)),
 
             const SizedBox(height: 16),
-            // Location info
             Container(
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
@@ -568,7 +717,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
             ),
 
             const SizedBox(height: 16),
-            // Actions
             Row(
               children: [
                 Expanded(
@@ -611,22 +759,46 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     if (location == null) return;
 
     final nameController = TextEditingController();
+    final radiusController = TextEditingController(text: '200');
+    
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Tạo vùng an toàn'),
-        content: TextField(controller: nameController, decoration: const InputDecoration(labelText: 'Tên vùng', prefixIcon: Icon(Icons.home))),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: nameController,
+              decoration: const InputDecoration(
+                labelText: 'Tên vùng',
+                prefixIcon: Icon(Icons.home),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: radiusController,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'Bán kính (m)',
+                prefixIcon: Icon(Icons.radar),
+                suffixText: 'mét',
+              ),
+            ),
+          ],
+        ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('Hủy')),
           FilledButton(
             onPressed: () async {
               if (nameController.text.isEmpty) return;
+              final radius = double.tryParse(radiusController.text) ?? 200;
               await provider.createSafeZone(SafeZone(
                 id: DateTime.now().millisecondsSinceEpoch.toString(),
                 name: nameController.text,
                 latitude: location.latitude,
                 longitude: location.longitude,
-                radiusMeters: 200,
+                radiusMeters: radius,
                 familyId: provider.currentUser!.familyId,
               ));
               if (mounted) Navigator.pop(context);
@@ -718,12 +890,16 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   }
 
   void _showFamilyMembersSheet() {
+    final isLandscape = MediaQuery.of(context).orientation == Orientation.landscape;
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => DraggableScrollableSheet(
-        initialChildSize: 0.5,
+        initialChildSize: isLandscape ? 0.8 : 0.5,
+        minChildSize: isLandscape ? 0.4 : 0.4,
+        maxChildSize: 0.95,
         builder: (context, scrollController) => Container(
           decoration: BoxDecoration(
             color: Theme.of(context).colorScheme.surface,
@@ -771,12 +947,34 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                                       '${provider.currentUser!.name} (Tôi)',
                                       style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                                     ),
-                                    Text(
-                                      provider.currentUser!.email,
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                                      ),
+                                    Row(
+                                      children: [
+                                        Flexible(
+                                          child: Text(
+                                            provider.currentUser!.email,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                            ),
+                                          ),
+                                        ),
+                                        if (provider.isAdmin) ...[
+                                          const SizedBox(width: 8),
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                            decoration: BoxDecoration(
+                                              color: Colors.amber.withOpacity(0.15),
+                                              borderRadius: BorderRadius.circular(4),
+                                            ),
+                                            child: const Text(
+                                              'Admin',
+                                              style: TextStyle(color: Colors.amber, fontSize: 10, fontWeight: FontWeight.bold),
+                                            ),
+                                          ),
+                                        ],
+                                      ],
                                     ),
                                   ],
                                 ),
@@ -803,7 +1001,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
               ),
               const Padding(
                 padding: EdgeInsets.only(top: 8, bottom: 4),
-                child: Text('Khác trong gia đình',
+                child: Text('Thành viên gia đình',
                     style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
               ),
               const SizedBox(height: 4),
@@ -830,70 +1028,103 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                         final loc = provider.memberLocations[member.id];
                         final isCurrentUser = member.id == provider.currentUser?.id;
 
-                        return ListTile(
-                          onTap: () {
-                            if (loc != null) {
-                              _mapController?.moveTo(AppLatLng(loc.latitude, loc.longitude), zoom: 16);
-                              Navigator.pop(context);
-                            }
-                          },
-                          leading: Stack(
+                        // Senior Fix: Replaced standard ListTile with a custom Row to handle flexible widths better and prevent overflows
+                        return Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                          child: Row(
                             children: [
-                              CircleAvatar(
-                                backgroundColor: isCurrentUser ? _currentUserColor : _familyMemberColor,
-                                child: _buildAvatarChild(member, size: 16),
-                              ),
-                              if (member.isLocationSharing)
-                                Positioned(
-                                  right: 0,
-                                  bottom: 0,
-                                  child: Container(
-                                    width: 12,
-                                    height: 12,
-                                    decoration: BoxDecoration(
-                                      color: Colors.green,
-                                      shape: BoxShape.circle,
-                                      border: Border.all(color: Colors.white, width: 1.5),
-                                    ),
+                              // 1. LEADING: Avatar
+                              Stack(
+                                children: [
+                                  CircleAvatar(
+                                    backgroundColor: isCurrentUser ? _currentUserColor : _familyMemberColor,
+                                    child: _buildAvatarChild(member, size: 16),
                                   ),
-                                ),
-                            ],
-                          ),
-                          title: Text(member.name),
-                          subtitle: Text(
-                          loc != null
-                              ? '${loc.address ?? '📍 ${loc.latitude.toStringAsFixed(4)}, ${loc.longitude.toStringAsFixed(4)}'}\n🕒 ${_timeAgo(loc.timestamp)}'
-                              : '📵 Chưa có vị trí',
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: member.isLocationSharing ? null : Colors.grey,
-                          ),
-                        ),
-                          trailing: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              IconButton(
-                                icon: const Icon(Icons.history, size: 20),
-                                tooltip: 'Lịch sử',
-                                onPressed: () {
-                                  Navigator.pop(context);
-                                  Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (_) => LocationHistoryScreen(member: member),
+                                  if (member.isLocationSharing)
+                                    Positioned(
+                                      right: 0,
+                                      bottom: 0,
+                                      child: Container(
+                                        width: 12,
+                                        height: 12,
+                                        decoration: BoxDecoration(
+                                          color: Colors.green,
+                                          shape: BoxShape.circle,
+                                          border: Border.all(color: Colors.white, width: 1.5),
+                                        ),
+                                      ),
                                     ),
-                                  );
-                                },
+                                ],
                               ),
-                              if (loc != null)
-                                IconButton(
-                                  icon: const Icon(Icons.location_searching, size: 20),
-                                  tooltip: 'Tập trung',
-                                  onPressed: () {
-                                    _mapController?.moveTo(AppLatLng(loc.latitude, loc.longitude), zoom: 16);
-                                    Navigator.pop(context);
-                                  },
+                              const SizedBox(width: 12),
+                              
+                              // 2. MIDDLE: Text Info (Expanded to take available space and prevent overflow)
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      member.name,
+                                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      provider.getDisplayAddress(loc),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: member.isLocationSharing ? Colors.black54 : Colors.grey,
+                                      ),
+                                    ),
+                                    if (loc != null)
+                                      Text(
+                                        '🕒 ${_timeAgo(loc.timestamp)}',
+                                        style: const TextStyle(fontSize: 10, color: Colors.black26),
+                                      ),
+                                  ],
                                 ),
+                              ),
+                              
+                              const SizedBox(width: 8),
+
+                              // 3. TRAILING: Action Buttons (Fixed width to prevent ANY overflow)
+                              SizedBox(
+                                width: (provider.isAdmin && !isCurrentUser) ? 100 : 70,
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.end,
+                                  children: [
+                                    _buildSmallActionButton(
+                                      icon: Icons.history,
+                                      tooltip: 'Lịch sử',
+                                      onPressed: () {
+                                        Navigator.pop(context);
+                                        Navigator.push(context, MaterialPageRoute(builder: (_) => LocationHistoryScreen(member: member)));
+                                      },
+                                    ),
+                                    if (loc != null) ...[
+                                      _buildSmallActionButton(
+                                        icon: Icons.location_searching,
+                                        tooltip: 'Tập trung',
+                                        onPressed: () {
+                                          _mapController?.moveTo(AppLatLng(loc.latitude, loc.longitude), zoom: 16);
+                                          Navigator.pop(context);
+                                        },
+                                      ),
+                                    ],
+                                    if (provider.isAdmin && !isCurrentUser) ...[
+                                      _buildSmallActionButton(
+                                        icon: Icons.person_remove,
+                                        color: Colors.red,
+                                        tooltip: 'Xóa',
+                                        onPressed: () => _confirmRemoveMember(member, provider),
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                              ),
                             ],
                           ),
                         );
@@ -909,7 +1140,54 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     );
   }
 
+  void _confirmRemoveMember(FamilyMember member, AppProvider provider) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Xóa thành viên?'),
+        content: Text('Bạn có chắc muốn xóa ${member.name} khỏi gia đình?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Hủy')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () async {
+              Navigator.pop(ctx);
+              final ok = await provider.removeFamilyMember(member.id);
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                  content: Text(ok ? '✅ Đã xóa ${member.name}' : '❌ Không thể xóa'),
+                  behavior: SnackBarBehavior.floating,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                ));
+              }
+            },
+            child: const Text('Xóa'),
+          ),
+        ],
+      ),
+    );
+  }
+
   // ── Helpers ──────────────────────────────────────────────
+
+  Widget _buildSmallActionButton({
+    required IconData icon,
+    required String tooltip,
+    required VoidCallback onPressed,
+    Color? color,
+  }) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onPressed,
+        borderRadius: BorderRadius.circular(20),
+        child: Container(
+          padding: const EdgeInsets.all(6),
+          child: Icon(icon, size: 18, color: color ?? Colors.black54),
+        ),
+      ),
+    );
+  }
 
   String _timeAgo(DateTime dt) {
     final diff = DateTime.now().difference(dt.toLocal());
@@ -940,5 +1218,3 @@ class _TrianglePainter extends CustomPainter {
   @override
   bool shouldRepaint(_TrianglePainter old) => old.color != color;
 }
-
-

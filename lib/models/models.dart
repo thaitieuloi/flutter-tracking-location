@@ -206,3 +206,147 @@ class Family {
     );
   }
 }
+
+// ── Notification Model ──────────────────────────────────────
+
+class AppNotification {
+  final String id;
+  final String userId;
+  final String title;
+  final String body;
+  final String type; // 'geofence' | 'sos' | 'battery_low' | 'inactivity_alert'
+  final bool read;
+  final Map<String, dynamic> metadata;
+  final DateTime createdAt;
+
+  AppNotification({
+    required this.id,
+    required this.userId,
+    required this.title,
+    required this.body,
+    required this.type,
+    this.read = false,
+    this.metadata = const {},
+    required this.createdAt,
+  });
+
+  factory AppNotification.fromMap(Map<String, dynamic> map) {
+    return AppNotification(
+      id: map['id'] ?? '',
+      userId: map['user_id'] ?? '',
+      title: map['title'] ?? '',
+      body: map['body'] ?? '',
+      type: map['type'] ?? 'geofence',
+      read: map['read'] ?? false,
+      metadata: (map['metadata'] as Map<String, dynamic>?) ?? {},
+      createdAt: map['created_at'] != null
+          ? DateTime.parse(map['created_at'].toString())
+          : DateTime.now(),
+    );
+  }
+
+  AppNotification copyWith({bool? read}) {
+    return AppNotification(
+      id: id,
+      userId: userId,
+      title: title,
+      body: body,
+      type: type,
+      read: read ?? this.read,
+      metadata: metadata,
+      createdAt: createdAt,
+    );
+  }
+}
+
+// ── Chat Message Model ──────────────────────────────────────
+
+class ChatMessage {
+  final String id;
+  final String familyId;
+  final String userId;
+  final String? content;
+  final String? imageUrl;
+  final double? locationLat;
+  final double? locationLng;
+  final DateTime createdAt;
+
+  ChatMessage({
+    required this.id,
+    required this.familyId,
+    required this.userId,
+    this.content,
+    this.imageUrl,
+    this.locationLat,
+    this.locationLng,
+    required this.createdAt,
+  });
+
+  factory ChatMessage.fromMap(Map<String, dynamic> map) {
+    return ChatMessage(
+      id: map['id'] ?? '',
+      familyId: map['family_id'] ?? '',
+      userId: map['user_id'] ?? '',
+      content: map['content'],
+      imageUrl: map['image_url'],
+      locationLat: (map['location_lat'] as num?)?.toDouble(),
+      locationLng: (map['location_lng'] as num?)?.toDouble(),
+      createdAt: map['created_at'] != null
+          ? DateTime.parse(map['created_at'].toString())
+          : DateTime.now(),
+    );
+  }
+
+  Map<String, dynamic> toInsertMap() {
+    return {
+      'family_id': familyId,
+      'user_id': userId,
+      if (content != null) 'content': content,
+      if (imageUrl != null) 'image_url': imageUrl,
+      if (locationLat != null) 'location_lat': locationLat,
+      if (locationLng != null) 'location_lng': locationLng,
+    };
+  }
+}
+
+// ── SOS Alert Model ─────────────────────────────────────────
+
+class SosAlert {
+  final String id;
+  final String userId;
+  final double latitude;
+  final double longitude;
+  final String message;
+  final DateTime createdAt;
+
+  SosAlert({
+    required this.id,
+    required this.userId,
+    required this.latitude,
+    required this.longitude,
+    this.message = 'SOS - Cần giúp đỡ!',
+    required this.createdAt,
+  });
+
+  factory SosAlert.fromMap(Map<String, dynamic> map) {
+    return SosAlert(
+      id: map['id'] ?? '',
+      userId: map['user_id'] ?? '',
+      latitude: (map['latitude'] as num?)?.toDouble() ?? 0.0,
+      longitude: (map['longitude'] as num?)?.toDouble() ?? 0.0,
+      message: map['message'] ?? 'SOS - Cần giúp đỡ!',
+      createdAt: map['created_at'] != null
+          ? DateTime.parse(map['created_at'].toString())
+          : DateTime.now(),
+    );
+  }
+
+  Map<String, dynamic> toInsertMap() {
+    return {
+      'user_id': userId,
+      'latitude': latitude,
+      'longitude': longitude,
+      'message': message,
+    };
+  }
+}

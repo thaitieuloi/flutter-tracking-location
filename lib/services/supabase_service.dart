@@ -10,6 +10,9 @@ import '../models/models.dart';
 ///   - user_locations(id, user_id, latitude, longitude, accuracy, timestamp)
 ///   - latest_locations(user_id, latitude, longitude, accuracy, speed, heading, is_moving, updated_at)
 ///   - geofences     (id, name, family_id, latitude, longitude, radius_meters, created_by)
+///   - messages      (id, family_id, user_id, content, image_url, location_lat, location_lng)
+///   - notifications (id, user_id, title, body, type, read, metadata)
+///   - sos_alerts    (id, user_id, latitude, longitude, message)
 class SupabaseService {
   final SupabaseClient _client = Supabase.instance.client;
 
@@ -20,6 +23,9 @@ class SupabaseService {
   static const _tUserLocations  = 'user_locations';
   static const _tLatestLoc      = 'latest_locations';
   static const _tGeofences      = 'geofences';
+  static const _tMessages       = 'messages';
+  static const _tNotifications  = 'notifications';
+  static const _tSosAlerts      = 'sos_alerts';
 
   // ── Auth ─────────────────────────────────────────────────
 
@@ -108,13 +114,27 @@ class SupabaseService {
     }
   }
 
+  Future<Family?> getFamilyInfo(String id) async {
+    try {
+      final data = await _client.from(_tFamilies).select('*').eq('id', id).maybeSingle();
+      if (data == null) return null;
+      return Family(
+        id: data['id'],
+        name: data['name'],
+        createdBy: data['created_by'],
+        members: [], // Members loaded separately in Provider
+      );
+    } catch (e) {
+      log('❌ [DB] getFamilyInfo error: $e');
+      return null;
+    }
+  }
+
   // ── Family ───────────────────────────────────────────────
 
   /// FIX: Get existing family_id from DB. Create new family ONLY if user has none.
-  /// Do NOT create new family on each login — that was the root bug.
   Future<String?> getOrCreateFamilyId(String userId, String userName) async {
     try {
-      // Always read from DB first
       final userData = await _client.from(_tUsers).select('family_id').eq('id', userId).maybeSingle();
       String? familyId = userData?['family_id'] as String?;
 
@@ -123,7 +143,6 @@ class SupabaseService {
         return familyId;
       }
 
-      // Only create new family if user genuinely has no family_id
       log('📝 [DB] No family found, creating new family for $userName');
       final code = _generateInviteCode(userName);
       final familyRes = await _client.from(_tFamilies).insert({
@@ -134,10 +153,8 @@ class SupabaseService {
 
       familyId = familyRes['id'] as String;
 
-      // Link user to family
       await _client.from(_tUsers).update({'family_id': familyId}).eq('id', userId);
 
-      // Try to add self to family_members
       try {
         await _client.from(_tFamilyMembers).upsert({
           'user_id': userId,
@@ -156,7 +173,6 @@ class SupabaseService {
     }
   }
 
-  /// Get the invite code for a family
   Future<String?> getInviteCode(String familyId) async {
     try {
       final row = await _client
@@ -171,7 +187,6 @@ class SupabaseService {
     }
   }
 
-  /// Join an existing family using invite code (for logged-in user)
   Future<bool> joinFamilyByCode(String userId, String inviteCode) async {
     try {
       log('🔑 [DB] joinFamilyByCode: $userId -> $inviteCode');
@@ -187,11 +202,8 @@ class SupabaseService {
       }
 
       final familyId = familyRow['id'] as String;
-
-      // Update user's family_id
       await _client.from(_tUsers).update({'family_id': familyId}).eq('id', userId);
 
-      // Add to family_members
       try {
         await _client.from(_tFamilyMembers).upsert({
           'user_id': userId,
@@ -238,7 +250,6 @@ class SupabaseService {
   Future<List<FamilyMember>> _fetchFamilyMembers(String familyId) async {
     try {
       log('📡 [DB] fetchFamilyMembers for family: $familyId');
-      // Query users directly by family_id (simpler, no RLS issues)
       final rows = await _client
           .from(_tUsers)
           .select()
@@ -273,6 +284,45 @@ class SupabaseService {
     } catch (e) {
       log('❌ [DB] addFamilyMember error: $e');
       return false;
+    }
+  }
+
+  /// Remove a member from family (admin only)
+  Future<bool> removeFamilyMember(String memberId, String familyId) async {
+    try {
+      log('🗑️ [DB] removeFamilyMember: $memberId from $familyId');
+      
+      // Remove from family_members
+      await _client.from(_tFamilyMembers)
+          .delete()
+          .eq('user_id', memberId)
+          .eq('family_id', familyId);
+      
+      // Clear family_id in users table
+      await _client.from(_tUsers)
+          .update({'family_id': ''})
+          .eq('id', memberId);
+
+      log('✅ [DB] removeFamilyMember: removed $memberId');
+      return true;
+    } catch (e) {
+      log('❌ [DB] removeFamilyMember error: $e');
+      return false;
+    }
+  }
+
+  /// Get user's role in a family
+  Future<String?> getMemberRole(String userId, String familyId) async {
+    try {
+      final row = await _client.from(_tFamilyMembers)
+          .select('role')
+          .eq('user_id', userId)
+          .eq('family_id', familyId)
+          .maybeSingle();
+      return row?['role'] as String?;
+    } catch (e) {
+      log('❌ [DB] getMemberRole error: $e');
+      return null;
     }
   }
 
@@ -330,16 +380,22 @@ class SupabaseService {
     }
   }
 
-  /// Get location history for a user (last N records)
-  Future<List<UserLocation>> getLocationHistory(String userId, {int limit = 50}) async {
+  Future<List<UserLocation>> getLocationHistory(String userId, {int limit = 50, DateTime? startTime, DateTime? endTime}) async {
     try {
-      log('📡 [DB] getLocationHistory: $userId (limit=$limit)');
-      final rows = await _client
+      log('📡 [DB] getLocationHistory: $userId (limit=$limit, start=$startTime, end=$endTime)');
+      var query = _client
           .from(_tUserLocations)
           .select('user_id, latitude, longitude, accuracy, timestamp')
-          .eq('user_id', userId)
-          .order('timestamp', ascending: false)
-          .limit(limit);
+          .eq('user_id', userId);
+
+      if (startTime != null) {
+        query = query.gte('timestamp', startTime.toIso8601String());
+      }
+      if (endTime != null) {
+        query = query.lte('timestamp', endTime.toIso8601String());
+      }
+
+      final rows = await query.order('timestamp', ascending: false).limit(limit);
 
       final list = (rows as List).map((r) => UserLocation(
         userId: r['user_id'] ?? userId,
@@ -347,6 +403,7 @@ class SupabaseService {
         longitude: (r['longitude'] as num).toDouble(),
         timestamp: DateTime.parse(r['timestamp']),
         accuracy: (r['accuracy'] as num?)?.toDouble(),
+        address: null, // Column does not exist in DB yet
       )).toList();
 
       log('✅ [DB] getLocationHistory: ${list.length} records');
@@ -461,6 +518,213 @@ class SupabaseService {
     } catch (e) {
       log('❌ [DB] deleteGeofence error: $e');
     }
+  }
+
+  // ── Notifications ────────────────────────────────────────
+
+  Future<List<AppNotification>> getNotifications(String userId) async {
+    try {
+      log('📡 [DB] getNotifications for: $userId');
+      final rows = await _client
+          .from(_tNotifications)
+          .select()
+          .eq('user_id', userId)
+          .order('created_at', ascending: false)
+          .limit(100);
+
+      final list = (rows as List).map((r) => AppNotification.fromMap(r)).toList();
+      log('✅ [DB] getNotifications: ${list.length}');
+      return list;
+    } catch (e) {
+      log('❌ [DB] getNotifications error: $e');
+      return [];
+    }
+  }
+
+  Future<int> getUnreadNotificationCount(String userId) async {
+    try {
+      final rows = await _client
+          .from(_tNotifications)
+          .select('id')
+          .eq('user_id', userId)
+          .eq('read', false);
+      return (rows as List).length;
+    } catch (e) {
+      log('❌ [DB] getUnreadNotificationCount error: $e');
+      return 0;
+    }
+  }
+
+  Future<void> markNotificationRead(String notificationId) async {
+    try {
+      await _client.from(_tNotifications).update({'read': true}).eq('id', notificationId);
+      log('✅ [DB] markNotificationRead: $notificationId');
+    } catch (e) {
+      log('❌ [DB] markNotificationRead error: $e');
+    }
+  }
+
+  Future<void> markAllNotificationsRead(String userId) async {
+    try {
+      await _client.from(_tNotifications)
+          .update({'read': true})
+          .eq('user_id', userId)
+          .eq('read', false);
+      log('✅ [DB] markAllNotificationsRead for $userId');
+    } catch (e) {
+      log('❌ [DB] markAllNotificationsRead error: $e');
+    }
+  }
+
+  Future<void> deleteNotification(String notificationId) async {
+    try {
+      await _client.from(_tNotifications).delete().eq('id', notificationId);
+      log('✅ [DB] deleteNotification: $notificationId');
+    } catch (e) {
+      log('❌ [DB] deleteNotification error: $e');
+    }
+  }
+
+  RealtimeChannel subscribeNotifications({
+    required String userId,
+    required void Function(int unreadCount) onData,
+  }) {
+    log('📡 [Realtime] Subscribing to notifications for user: $userId');
+    getUnreadNotificationCount(userId).then(onData);
+
+    return _client
+        .channel('notifs_$userId')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: _tNotifications,
+          filter: PostgresChangeFilter(
+            type: PostgresChangeFilterType.eq,
+            column: 'user_id',
+            value: userId,
+          ),
+          callback: (_) => getUnreadNotificationCount(userId).then(onData),
+        )
+        .subscribe((status, [error]) {
+          log('📡 [Realtime] notifications[$userId] status=$status error=$error');
+        });
+  }
+
+  // ── SOS Alerts ───────────────────────────────────────────
+
+  Future<bool> sendSosAlert({
+    required String userId,
+    required double latitude,
+    required double longitude,
+    String message = 'SOS - Cần giúp đỡ!',
+  }) async {
+    try {
+      log('🚨 [DB] sendSosAlert: $userId');
+
+      // Insert SOS alert record
+      await _client.from(_tSosAlerts).insert({
+        'user_id': userId,
+        'latitude': latitude,
+        'longitude': longitude,
+        'message': message,
+      });
+
+      // Try to call Edge Function
+      try {
+        await _client.functions.invoke('send-sos-notification', body: {
+          'user_id': userId,
+          'latitude': latitude,
+          'longitude': longitude,
+          'message': message,
+        });
+        log('✅ [Edge] send-sos-notification called');
+      } catch (e) {
+        log('⚠️ [Edge] send-sos-notification failed (non-critical): $e');
+      }
+
+      log('✅ [DB] SOS alert saved');
+      return true;
+    } catch (e) {
+      log('❌ [DB] sendSosAlert error: $e');
+      return false;
+    }
+  }
+
+  // ── Messages (Chat) ──────────────────────────────────────
+
+  Future<List<ChatMessage>> getMessages(String familyId, {int limit = 100}) async {
+    try {
+      log('📡 [DB] getMessages for family: $familyId');
+      final rows = await _client
+          .from(_tMessages)
+          .select()
+          .eq('family_id', familyId)
+          .order('created_at', ascending: true)
+          .limit(limit);
+
+      final list = (rows as List).map((r) => ChatMessage.fromMap(r)).toList();
+      log('✅ [DB] getMessages: ${list.length}');
+      return list;
+    } catch (e) {
+      log('❌ [DB] getMessages error: $e');
+      return [];
+    }
+  }
+
+  Future<ChatMessage?> sendMessage({
+    required String familyId,
+    required String userId,
+    String? content,
+    String? imageUrl,
+    double? locationLat,
+    double? locationLng,
+  }) async {
+    try {
+      log('📝 [DB] sendMessage: $userId -> $familyId');
+      final data = <String, dynamic>{
+        'family_id': familyId,
+        'user_id': userId,
+      };
+      if (content != null) data['content'] = content;
+      if (imageUrl != null) data['image_url'] = imageUrl;
+      if (locationLat != null) data['location_lat'] = locationLat;
+      if (locationLng != null) data['location_lng'] = locationLng;
+
+      final res = await _client.from(_tMessages).insert(data).select().single();
+      log('✅ [DB] sendMessage success');
+      return ChatMessage.fromMap(res);
+    } catch (e) {
+      log('❌ [DB] sendMessage error: $e');
+      return null;
+    }
+  }
+
+  RealtimeChannel subscribeMessages({
+    required String familyId,
+    required void Function(ChatMessage) onNewMessage,
+  }) {
+    log('📡 [Realtime] Subscribing to messages for family: $familyId');
+
+    return _client
+        .channel('messages_$familyId')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.insert,
+          schema: 'public',
+          table: _tMessages,
+          filter: PostgresChangeFilter(
+            type: PostgresChangeFilterType.eq,
+            column: 'family_id',
+            value: familyId,
+          ),
+          callback: (payload) {
+            if (payload.newRecord.isNotEmpty) {
+              onNewMessage(ChatMessage.fromMap(payload.newRecord));
+            }
+          },
+        )
+        .subscribe((status, [error]) {
+          log('📡 [Realtime] messages[$familyId] status=$status error=$error');
+        });
   }
 
   // ── Cleanup ──────────────────────────────────────────────
