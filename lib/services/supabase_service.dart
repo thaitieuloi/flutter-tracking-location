@@ -139,6 +139,16 @@ class SupabaseService {
     }
   }
 
+  Future<DateTime> getServerTime() async {
+    try {
+      final res = await _client.rpc('get_server_time');
+      return DateTime.parse(res.toString());
+    } catch (e) {
+      log('⚠️ [DB] getServerTime failed, falling back to local: $e');
+      return DateTime.now();
+    }
+  }
+
   // ── Family ───────────────────────────────────────────────
 
   /// FIX: Get existing family_id from DB. Create new family ONLY if user has none.
@@ -314,6 +324,8 @@ class SupabaseService {
           if (profile['display_name'] != null && profile['display_name'].toString().isNotEmpty) {
             combined['name'] = profile['display_name'];
           }
+          // Use profile updated_at as a fallback for last_seen if it's fresher
+          combined['profile_updated_at'] = profile['updated_at'];
         }
         
         return _userRowToMember(combined);
@@ -806,9 +818,18 @@ class SupabaseService {
       photoUrl: data['photo_url'],
       familyId: data['family_id'] ?? '',
       isLocationSharing: data['is_location_sharing'] ?? false,
-      lastSeen: data['last_seen'] != null ? DateTime.tryParse(data['last_seen'].toString()) : null,
+      lastSeen: _getLatestTimestamp(data['last_seen'], data['profile_updated_at']),
       status: data['status'] ?? 'offline',
     );
+  }
+
+  DateTime? _getLatestTimestamp(dynamic ts1, dynamic ts2) {
+    if (ts1 == null && ts2 == null) return null;
+    final d1 = ts1 != null ? DateTime.tryParse(ts1.toString()) : null;
+    final d2 = ts2 != null ? DateTime.tryParse(ts2.toString()) : null;
+    if (d1 == null) return d2;
+    if (d2 == null) return d1;
+    return d1.isAfter(d2) ? d1 : d2;
   }
 
   Future<void> updateProfile({required String userId, String? name, String? photoUrl}) async {

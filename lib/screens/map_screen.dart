@@ -627,7 +627,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   void _showMemberDetails(FamilyMember member, UserLocation loc) {
     final colorScheme = Theme.of(context).colorScheme;
     final isCurrentUser = member.id == Provider.of<AppProvider>(context, listen: false).currentUser?.id;
-    final ago = _timeAgo(loc.timestamp);
+    final ago = _timeAgo(_getFreshestTimestamp(member, loc));
 
     showModalBottomSheet(
       context: context,
@@ -1114,11 +1114,10 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                                         color: member.isLocationSharing ? Colors.black54 : Colors.grey,
                                       ),
                                     ),
-                                    if (loc != null)
-                                      Text(
-                                        '🕒 ${_timeAgo(loc.timestamp)}',
-                                        style: const TextStyle(fontSize: 10, color: Colors.black26),
-                                      ),
+                                    Text(
+                                      '🕒 ${_timeAgo(_getFreshestTimestamp(member, loc))}',
+                                      style: const TextStyle(fontSize: 10, color: Colors.black26),
+                                    ),
                                   ],
                                 ),
                               ),
@@ -1225,11 +1224,21 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   }
 
   String _timeAgo(DateTime dt) {
-    final diff = DateTime.now().difference(dt.toLocal());
-    if (diff.inSeconds < 60) return 'vừa xong';
+    final now = Provider.of<AppProvider>(context, listen: false).serverNow;
+    final diff = now.difference(dt.isUtc ? dt.toLocal() : dt);
+    if (diff.isNegative || diff.inSeconds < 30) return 'vừa xong';
     if (diff.inMinutes < 60) return '${diff.inMinutes} phút trước';
     if (diff.inHours < 24) return '${diff.inHours} giờ trước';
-    return '${diff.inDays} ngày trước';
+    if (diff.inDays < 30) return '${diff.inDays} ngày trước';
+    return '${(diff.inDays / 30).floor()} tháng trước';
+  }
+
+  DateTime _getFreshestTimestamp(FamilyMember member, UserLocation? loc) {
+    final lastSeen = member.lastSeen;
+    final locTime = loc?.timestamp;
+    if (lastSeen == null) return locTime ?? DateTime.now();
+    if (locTime == null) return lastSeen;
+    return lastSeen.isAfter(locTime) ? lastSeen : locTime;
   }
 }
 

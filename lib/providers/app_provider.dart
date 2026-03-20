@@ -19,6 +19,7 @@ class AppProvider extends ChangeNotifier {
   bool _isLocationSharing = false;
   bool _isLoading = false;
   int _unreadNotificationCount = 0;
+  Duration _serverTimeOffset = Duration.zero;
 
   RealtimeChannel? _familyChannel;
   RealtimeChannel? _geofencesChannel;
@@ -38,6 +39,7 @@ class AppProvider extends ChangeNotifier {
   bool                       get isLocationSharing      => _isLocationSharing;
   bool                       get isLoading              => _isLoading;
   int                        get unreadNotificationCount => _unreadNotificationCount;
+  DateTime                   get serverNow               => DateTime.now().add(_serverTimeOffset);
 
   Future<void> initialize() async {
     final user = _svc.currentUser;
@@ -46,6 +48,23 @@ class AppProvider extends ChangeNotifier {
       await loadUserData(user.id);
     } else {
       _svc.log('🚀 [App] No session found, waiting for login');
+    }
+    await syncServerTime();
+  }
+
+  Future<void> syncServerTime() async {
+    try {
+      final start = DateTime.now();
+      final serverTime = await _svc.getServerTime();
+      final end = DateTime.now();
+      final roundTrip = end.difference(start) ~/ 2;
+      
+      // offset = actualServerTimeAtEnd - clientTimeAtEnd
+      // actualServerTimeAtEnd = serverTimeReportedAtResponseStart + roundTrip
+      _serverTimeOffset = serverTime.add(roundTrip).difference(end);
+      _svc.log('🕒 [TimeSync] Server offset: ${_serverTimeOffset.inMilliseconds}ms');
+    } catch (e) {
+      _svc.log('⚠️ [TimeSync] Failed: $e');
     }
   }
 
