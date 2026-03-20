@@ -8,6 +8,7 @@ import '../widgets/map_adapter/leaflet_adapter.dart';
 import 'location_history_screen.dart';
 import 'notifications_screen.dart';
 import 'chat_screen.dart';
+import 'profile_screen.dart';
 
 class MapScreen extends StatefulWidget {
   const MapScreen({Key? key}) : super(key: key);
@@ -538,6 +539,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         onSelected: (value) async {
           if (value == 'signout') {
             await provider.signOut();
+          } else if (value == 'profile') {
+            Navigator.push(context, MaterialPageRoute(builder: (_) => const ProfileScreen()));
           } else if (value == 'join_family') {
             _showJoinFamilyDialog();
           } else if (value == 'add_member') {
@@ -551,6 +554,14 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
           }
         },
         itemBuilder: (context) => [
+          const PopupMenuItem(
+            value: 'profile',
+            child: Row(children: [
+              Icon(Icons.person_outline, size: 20),
+              SizedBox(width: 8),
+              Text('Cài đặt cá nhân'),
+            ]),
+          ),
           const PopupMenuItem(
             value: 'chat',
             child: Row(children: [

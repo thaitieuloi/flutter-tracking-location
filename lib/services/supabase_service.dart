@@ -114,6 +114,59 @@ class SupabaseService {
     }
   }
 
+  Future<void> updateDisplayName(String userId, String name) async {
+    try {
+      log('🔄 [DB] updateDisplayName: $userId -> $name');
+      await _client.from('profiles').update({'display_name': name}).eq('user_id', userId);
+    } catch (e) {
+      log('❌ [DB] updateDisplayName error: $e');
+      throw e;
+    }
+  }
+
+  Future<String?> uploadAvatar(String userId, List<int> bytes, String extension) async {
+    try {
+      log('📡 [Storage] uploadAvatar for $userId');
+      // Using 'chat-images' bucket as 'avatars' bucket does not exist
+      final filePath = '$userId/avatar.$extension';
+      
+      // Upload with upsert: true to replace existing
+      await _client.storage.from('avatars').uploadBinary(
+        filePath, 
+        Uint8List.fromList(bytes),
+        fileOptions: const FileOptions(upsert: true),
+      );
+
+      final publicUrl = _client.storage.from('avatars').getPublicUrl(filePath);
+      // Append timestamp to bust cache in Flutter
+      final bustUrl = '$publicUrl?t=${DateTime.now().millisecondsSinceEpoch}';
+
+      log('🔄 [DB] updateAvatarUrl in profiles: $bustUrl');
+      await _client.from('profiles').update({'avatar_url': bustUrl}).eq('user_id', userId);
+      
+      return bustUrl;
+    } catch (e) {
+      log('❌ [Storage] uploadAvatar error: $e');
+      return null;
+    }
+  }
+
+  Future<void> updateProfile({required String userId, String? name, String? photoUrl}) async {
+    try {
+      final updates = <String, dynamic>{};
+      if (name != null) updates['display_name'] = name;
+      if (photoUrl != null) updates['avatar_url'] = photoUrl;
+      
+      if (updates.isNotEmpty) {
+        log('🔄 [DB] updateProfile for $userId: $updates');
+        await _client.from('profiles').update(updates).eq('user_id', userId);
+      }
+    } catch (e) {
+      log('❌ [DB] updateProfile error: $e');
+      throw e;
+    }
+  }
+
   Future<void> toggleLocationSharing(String userId, bool enabled) async {
     try {
       log('🔄 [DB] toggleLocationSharing: $userId -> $enabled');
