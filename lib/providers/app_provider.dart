@@ -185,6 +185,8 @@ class AppProvider extends ChangeNotifier {
     _svc.log('🔐 [App] signIn: $email');
     final user = await _svc.signIn(email, password);
     if (user != null) {
+      // Proactively set status to online
+      await _svc.updateUserStatus(user.id, 'online');
       await loadUserData(user.id);
       return true;
     }
@@ -195,6 +197,8 @@ class AppProvider extends ChangeNotifier {
     _svc.log('🔐 [App] signUp: $email | code: ${inviteCode ?? 'none'}');
     final user = await _svc.signUp(email, password, name, inviteCode: inviteCode);
     if (user != null) {
+      // Proactively set status to online
+      await _svc.updateUserStatus(user.id, 'online');
       await loadUserData(user.id);
       return true;
     }

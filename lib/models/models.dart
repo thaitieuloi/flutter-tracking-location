@@ -9,6 +9,7 @@ class FamilyMember {
   final String familyId;
   final bool isLocationSharing;
   final DateTime? lastSeen;
+  final String status; // 'online', 'idle', 'offline'
 
   FamilyMember({
     required this.id,
@@ -18,6 +19,7 @@ class FamilyMember {
     required this.familyId,
     this.isLocationSharing = false,
     this.lastSeen,
+    this.status = 'offline',
   });
 
   Map<String, dynamic> toMap() {
@@ -29,6 +31,7 @@ class FamilyMember {
       'family_id': familyId,
       'is_location_sharing': isLocationSharing,
       'last_seen': lastSeen?.toIso8601String(),
+      'status': status,
     };
   }
 
@@ -41,6 +44,7 @@ class FamilyMember {
       'photo_url': photoUrl,
       'family_id': familyId,
       'is_location_sharing': isLocationSharing,
+      // Status usually handled by profiles table, but included here for consistency if needed
     };
   }
 
@@ -55,6 +59,7 @@ class FamilyMember {
       lastSeen: map['last_seen'] != null
           ? DateTime.tryParse(map['last_seen'].toString())
           : null,
+      status: map['status'] ?? 'offline',
     );
   }
 
@@ -66,6 +71,7 @@ class FamilyMember {
     String? familyId,
     bool? isLocationSharing,
     DateTime? lastSeen,
+    String? status,
   }) {
     return FamilyMember(
       id: id ?? this.id,
@@ -75,6 +81,7 @@ class FamilyMember {
       familyId: familyId ?? this.familyId,
       isLocationSharing: isLocationSharing ?? this.isLocationSharing,
       lastSeen: lastSeen ?? this.lastSeen,
+      status: status ?? this.status,
     );
   }
 }

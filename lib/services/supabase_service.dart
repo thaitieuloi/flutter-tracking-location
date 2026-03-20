@@ -83,6 +83,15 @@ class SupabaseService {
   }
 
   Future<void> signOut() async {
+    final userId = _client.auth.currentUser?.id;
+    if (userId != null) {
+      try {
+        log('🔐 [Auth] Marking offline before signOut: $userId');
+        await updateUserStatus(userId, 'offline');
+      } catch (e) {
+        log('⚠️ [Auth] Failed to set offline status on signOut: $e');
+      }
+    }
     log('🔐 [Auth] signOut');
     await _client.auth.signOut();
   }
@@ -242,6 +251,12 @@ class SupabaseService {
           ),
           callback: (_) => _fetchFamilyMembers(familyId).then(onData),
         )
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'profiles',
+          callback: (_) => _fetchFamilyMembers(familyId).then(onData),
+        )
         .subscribe((status, [error]) {
           log('📡 [Realtime] users_family status=$status error=$error');
         });
@@ -250,16 +265,63 @@ class SupabaseService {
   Future<List<FamilyMember>> _fetchFamilyMembers(String familyId) async {
     try {
       log('📡 [DB] fetchFamilyMembers for family: $familyId');
-      final rows = await _client
-          .from(_tUsers)
-          .select()
-          .eq('family_id', familyId);
+      
+      List<dynamic> rows;
+      try {
+        // Attempt to fetch users and profiles in one go using join
+        rows = await _client
+            .from(_tUsers)
+            .select('*, profiles!user_id(*)')
+            .eq('family_id', familyId);
+      } catch (joinErr) {
+        log('⚠️ [DB] Joined fetch failed (likely missing FK): $joinErr. Falling back to separate queries.');
+        
+        // Fallback: Fetch users only
+        rows = await _client
+            .from(_tUsers)
+            .select('*')
+            .eq('family_id', familyId);
+        
+        if (rows.isNotEmpty) {
+          final userIds = rows.map((r) => r['id'].toString()).toList();
+          final profiles = await _client
+              .from('profiles')
+              .select('*')
+              .inFilter('user_id', userIds);
+          
+          final profileMap = {for (var p in (profiles as List)) p['user_id'].toString(): p};
+          
+          // Merge profiles into rows
+          for (var row in rows) {
+            row['profiles'] = profileMap[row['id'].toString()];
+          }
+        }
+      }
 
-      final members = (rows as List).map((row) => _userRowToMember(row)).toList();
+      final members = (rows as List).map((row) {
+        // Safe access to joined profile
+        final rawProfile = row['profiles'];
+        final profile = (rawProfile is List && (rawProfile as List).isNotEmpty)
+            ? (rawProfile as List).first
+            : (rawProfile is Map ? rawProfile : null);
+            
+        final combined = Map<String, dynamic>.from(row);
+        if (profile != null) {
+          combined['status'] = profile['status'];
+          if (profile['avatar_url'] != null) {
+            combined['photo_url'] = profile['avatar_url'];
+          }
+          if (profile['display_name'] != null && profile['display_name'].toString().isNotEmpty) {
+            combined['name'] = profile['display_name'];
+          }
+        }
+        
+        return _userRowToMember(combined);
+      }).toList();
       log('✅ [DB] fetchFamilyMembers: ${members.length} members');
       return members;
     } catch (e) {
-      log('❌ [DB] fetchFamilyMembers error: $e');
+      log('❌ [DB] fetchFamilyMembers critical error: $e');
       return [];
     }
   }
@@ -357,7 +419,7 @@ class SupabaseService {
           .update({'last_seen': location.timestamp.toIso8601String()})
           .eq('id', location.userId);
 
-      log('✅ [DB] Location saved to user_locations + latest_locations');
+      log('✅ [DB] Location saved to user_locations + latest_locations + status updated');
     } catch (e) {
       log('❌ [DB] updateUserLocation error: $e');
     }
@@ -745,6 +807,7 @@ class SupabaseService {
       familyId: data['family_id'] ?? '',
       isLocationSharing: data['is_location_sharing'] ?? false,
       lastSeen: data['last_seen'] != null ? DateTime.tryParse(data['last_seen'].toString()) : null,
+      status: data['status'] ?? 'offline',
     );
   }
 

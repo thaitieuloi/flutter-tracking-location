@@ -1,3 +1,4 @@
+import 'dart:developer';
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -94,34 +95,50 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
 
   @override
   void dispose() {
-    _updateStatus('offline');
+    _updateStatus('idle');
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
 
+  String? _lastStatus;
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    log('📱 [App] Lifecycle state changed to: $state');
     switch (state) {
       case AppLifecycleState.resumed:
         _updateStatus('online');
         break;
       case AppLifecycleState.inactive:
       case AppLifecycleState.paused:
+      case AppLifecycleState.hidden:
         _updateStatus('idle');
         break;
       case AppLifecycleState.detached:
-        _updateStatus('offline');
-        break;
-      case AppLifecycleState.hidden:
+        // Even if detached, background service might still be alive
         _updateStatus('idle');
         break;
     }
   }
 
   void _updateStatus(String status) {
+    if (_lastStatus == status) {
+      log('⏭️ [App] Skipping redundant status update: $status');
+      return;
+    }
+    
     final userId = Supabase.instance.client.auth.currentUser?.id;
     if (userId != null) {
-      _supabaseService.updateUserStatus(userId, status);
+      _lastStatus = status;
+      log('🔄 [App] Requesting status update: $userId -> $status');
+      // We use await to ensure chronological order if this was in an async block,
+      // but here we just want to ensure we don't spam.
+      _supabaseService.updateUserStatus(userId, status).then((_) {
+        log('✅ [App] Status update completed: $status');
+      }).catchError((e) {
+        log('❌ [App] Status update failed: $status | $e');
+        _lastStatus = null; // Clear on error to allow retry
+      });
     }
   }
 

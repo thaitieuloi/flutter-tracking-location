@@ -61,26 +61,24 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     return Scaffold(
       appBar: AppBar(
         title: Consumer<AppProvider>(
-          builder: (context, provider, _) => Flexible(
-            child: GestureDetector(
-              onTap: _showFamilyMembersSheet,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
+          builder: (context, provider, _) => GestureDetector(
+            onTap: _showFamilyMembersSheet,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  provider.familyName.isEmpty ? 'Together Home' : provider.familyName,
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                if (provider.familyMembers.isNotEmpty)
                   Text(
-                    provider.familyName.isEmpty ? 'Together Home' : provider.familyName,
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                    '${provider.familyMembers.length} thành viên',
+                    style: TextStyle(fontSize: 12, color: colorScheme.onSurfaceVariant),
                   ),
-                  if (provider.familyMembers.isNotEmpty)
-                    Text(
-                      '${provider.familyMembers.length} thành viên',
-                      style: TextStyle(fontSize: 12, color: colorScheme.onSurfaceVariant),
-                    ),
-                ],
-              ),
+              ],
             ),
           ),
         ),
@@ -1036,9 +1034,23 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                               // 1. LEADING: Avatar
                               Stack(
                                 children: [
-                                  CircleAvatar(
-                                    backgroundColor: isCurrentUser ? _currentUserColor : _familyMemberColor,
-                                    child: _buildAvatarChild(member, size: 16),
+                                  Container(
+                                    padding: const EdgeInsets.all(2),
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      border: Border.all(
+                                        color: member.status == 'online' 
+                                            ? Colors.green 
+                                            : member.status == 'idle' 
+                                                ? Colors.amber 
+                                                : Colors.transparent,
+                                        width: 2,
+                                      ),
+                                    ),
+                                    child: CircleAvatar(
+                                      backgroundColor: isCurrentUser ? _currentUserColor : _familyMemberColor,
+                                      child: _buildAvatarChild(member, size: 16),
+                                    ),
                                   ),
                                   if (member.isLocationSharing)
                                     Positioned(
@@ -1063,11 +1075,34 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    Text(
-                                      member.name,
-                                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
+                                    Row(
+                                      children: [
+                                        Flexible(
+                                          child: Text(
+                                            member.name,
+                                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 6),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                                          decoration: BoxDecoration(
+                                            color: (member.status == 'online' ? Colors.green : (member.status == 'idle' ? Colors.amber : Colors.grey)).withOpacity(0.12),
+                                            borderRadius: BorderRadius.circular(4),
+                                            border: Border.all(color: (member.status == 'online' ? Colors.green : (member.status == 'idle' ? Colors.amber : Colors.grey)).withOpacity(0.3)),
+                                          ),
+                                          child: Text(
+                                            member.status == 'online' ? 'Online' : (member.status == 'idle' ? 'Vừa xong' : 'Offline'),
+                                            style: TextStyle(
+                                              color: member.status == 'online' ? Colors.green : (member.status == 'idle' ? Colors.amber[800] : Colors.grey[700]), 
+                                              fontSize: 9, 
+                                              fontWeight: FontWeight.bold
+                                            ),
+                                          ),
+                                        ),
+                                      ],
                                     ),
                                     const SizedBox(height: 2),
                                     Text(
