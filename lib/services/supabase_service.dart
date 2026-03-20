@@ -347,6 +347,7 @@ class SupabaseService {
         'latitude': location.latitude,
         'longitude': location.longitude,
         'accuracy': location.accuracy,
+        'battery_level': location.batteryLevel,
         'updated_at': location.timestamp.toIso8601String(),
       }, onConflict: 'user_id');
 
@@ -760,6 +761,15 @@ class SupabaseService {
       log('✅ [DB] updateProfile success');
     } catch (e) {
       log('❌ [DB] updateProfile error: $e');
+    }
+  }
+
+  Future<void> updateUserStatus(String userId, String status) async {
+    try {
+      log('🔄 [DB] updateUserStatus: $userId -> $status');
+      await _client.from('profiles').update({'status': status}).eq('user_id', userId);
+    } catch (e) {
+      log('❌ [DB] updateUserStatus error: $e');
     }
   }
 

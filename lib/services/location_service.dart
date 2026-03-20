@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
+import 'package:battery_plus/battery_plus.dart';
 import '../models/models.dart';
 
 /// Service for managing device location.
@@ -10,6 +11,7 @@ class LocationService {
   Timer? _periodicTimer;
   Position? _lastSentPosition;
   DateTime? _lastSentTime;
+  final Battery _battery = Battery();
 
   /// Check and request location permissions.
   Future<bool> requestLocationPermission() async {
@@ -148,6 +150,8 @@ class LocationService {
       position.longitude,
     );
 
+    final batteryLevel = await _battery.batteryLevel;
+
     return UserLocation(
       userId: userId,
       latitude: position.latitude,
@@ -155,6 +159,7 @@ class LocationService {
       timestamp: DateTime.now().toUtc(),
       accuracy: position.accuracy,
       address: address,
+      batteryLevel: batteryLevel,
     );
   }
 

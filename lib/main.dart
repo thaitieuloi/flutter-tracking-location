@@ -4,6 +4,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:provider/provider.dart';
 import 'config/supabase_config.dart';
 import 'providers/app_provider.dart';
+import 'services/supabase_service.dart';
 import 'screens/login_screen.dart';
 import 'screens/map_screen.dart';
 
@@ -66,13 +67,62 @@ class AuthWrapper extends StatefulWidget {
   State<AuthWrapper> createState() => _AuthWrapperState();
 }
 
-class _AuthWrapperState extends State<AuthWrapper> {
+class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
   late final Stream<AuthState> _authStream;
+  final _supabaseService = SupabaseService();
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _authStream = Supabase.instance.client.auth.onAuthStateChange;
+    
+    // Listen to Auth state changes to set status
+    _authStream.listen((data) {
+      if (data.event == AuthChangeEvent.signedIn || data.session != null) {
+        _updateStatus('online');
+      } else if (data.event == AuthChangeEvent.signedOut) {
+        _updateStatus('offline');
+      }
+    });
+
+    // Initial check
+    if (Supabase.instance.client.auth.currentSession != null) {
+      _updateStatus('online');
+    }
+  }
+
+  @override
+  void dispose() {
+    _updateStatus('offline');
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    switch (state) {
+      case AppLifecycleState.resumed:
+        _updateStatus('online');
+        break;
+      case AppLifecycleState.inactive:
+      case AppLifecycleState.paused:
+        _updateStatus('idle');
+        break;
+      case AppLifecycleState.detached:
+        _updateStatus('offline');
+        break;
+      case AppLifecycleState.hidden:
+        _updateStatus('idle');
+        break;
+    }
+  }
+
+  void _updateStatus(String status) {
+    final userId = Supabase.instance.client.auth.currentUser?.id;
+    if (userId != null) {
+      _supabaseService.updateUserStatus(userId, status);
+    }
   }
 
   @override

@@ -97,6 +97,7 @@ class AppProvider extends ChangeNotifier {
         familyId: _familyId!,
         onData: (members) {
           _svc.log('👥 [App] Family members updated: ${members.length}');
+          members.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
           _familyMembers = members;
           notifyListeners();
           _subscribeToMemberLocations(members);
@@ -202,6 +203,9 @@ class AppProvider extends ChangeNotifier {
 
   Future<void> signOut() async {
     _svc.log('🔐 [App] signOut');
+    if (_currentUser != null) {
+      await _svc.updateUserStatus(_currentUser!.id, 'offline');
+    }
     stopLocationSharing();
     await _cleanupSubscriptions();
     await _svc.signOut();

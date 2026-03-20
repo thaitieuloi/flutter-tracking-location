@@ -86,6 +86,7 @@ class UserLocation {
   final DateTime timestamp;
   final double? accuracy;
   final String? address;
+  final int? batteryLevel;
 
   UserLocation({
     required this.userId,
@@ -94,6 +95,7 @@ class UserLocation {
     required this.timestamp,
     this.accuracy,
     this.address,
+    this.batteryLevel,
   });
 
   Map<String, dynamic> toMap() {
@@ -104,6 +106,7 @@ class UserLocation {
       'timestamp': timestamp.toIso8601String(),
       'accuracy': accuracy,
       'address': address,
+      'battery_level': batteryLevel,
     };
   }
 
@@ -117,6 +120,7 @@ class UserLocation {
           : DateTime.now(),
       accuracy: (map['accuracy'] as num?)?.toDouble(),
       address: map['address'],
+      batteryLevel: map['battery_level'] as int?,
     );
   }
 }
