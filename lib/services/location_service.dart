@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
 import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:battery_plus/battery_plus.dart';
@@ -56,33 +58,70 @@ class LocationService {
   }
 
   /// Reverse geocode coordinates to a human-readable address.
+  /// Uses Nominatim (OSM) as primary source, matching web implementation.
   Future<String?> getAddressFromCoordinates(
     double latitude,
     double longitude,
   ) async {
     try {
+      // 1. Try Nominatim (Primary - same as web)
+      final url = Uri.parse(
+        'https://nominatim.openstreetmap.org/reverse?lat=$latitude&lon=$longitude&format=json&accept-language=vi',
+      );
+      
+      final response = await http.get(
+        url,
+        headers: { 'User-Agent': 'FamilyTracker/1.0 (family-tracker-app)' },
+      ).timeout(const Duration(seconds: 4));
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final addr = data['address'] ?? {};
+        
+        final parts = <String>[];
+        if (addr['road'] != null) parts.add(addr['road']);
+        if (addr['suburb'] != null || addr['quarter'] != null || addr['neighbourhood'] != null) {
+          parts.add(addr['suburb'] ?? addr['quarter'] ?? addr['neighbourhood']);
+        }
+        if (addr['city_district'] != null || addr['town'] != null || addr['village'] != null) {
+          parts.add(addr['city_district'] ?? addr['town'] ?? addr['village']);
+        }
+
+        if (parts.isNotEmpty) {
+          return parts.join(', ');
+        }
+        
+        // Fallback to display_name formatting
+        final displayName = data['display_name'] as String?;
+        if (displayName != null && displayName.isNotEmpty) {
+          return displayName.split(',').take(2).join(',').trim();
+        }
+      }
+    } catch (e) {
+      print('LocationService: Nominatim error: $e');
+    }
+
+    // 2. Fallback to native geocoding (Secondary)
+    try {
       List<Placemark> placemarks = await placemarkFromCoordinates(
         latitude,
         longitude,
-      ).timeout(const Duration(seconds: 5));
+      ).timeout(const Duration(seconds: 3));
 
       if (placemarks.isNotEmpty) {
         Placemark place = placemarks[0];
-
         final components = [
           place.street,
           place.subLocality,
           place.locality,
           place.administrativeArea,
         ].where((c) => c != null && c.isNotEmpty).toList();
-
         return components.join(', ');
       }
-    } on TimeoutException {
-      return null;
     } catch (e) {
-      print('LocationService: Error getting address: $e');
+      print('LocationService: Native geocoding fallback error: $e');
     }
+    
     return null;
   }
 

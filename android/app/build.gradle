@@ -46,7 +46,7 @@ android {
     defaultConfig {
         applicationId = "com.familytracker.app"
         minSdkVersion = flutter.minSdkVersion
-        targetSdk = 36
+        targetSdk = 34
         versionCode = flutterVersionCode.toInteger()
         versionName = flutterVersionName
         multiDexEnabled = true
@@ -89,4 +89,9 @@ android {
 
 flutter {
     source = "../.."
+}
+
+dependencies {
+    implementation "androidx.lifecycle:lifecycle-process:2.7.0"
+    implementation "androidx.lifecycle:lifecycle-common-java8:2.7.0"
 }

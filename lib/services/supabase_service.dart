@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/models.dart';
+import 'native_lifecycle_service.dart';
 
 /// SupabaseService aligned with actual DB schema:
 ///   - users         (id, email, name, family_id, is_location_sharing, last_seen)
@@ -87,14 +88,25 @@ class SupabaseService {
     final userId = _client.auth.currentUser?.id;
     if (userId != null) {
       try {
-        log('🔐 [Auth] Marking offline before signOut: $userId');
-        await updateUserStatus(userId, 'offline');
+        log('🔐 [Auth] Updating profile to: Thoát hệ thống ($userId)');
+        // Update DB BEFORE signing out of auth session to avoid RLS error
+        await _client.from('profiles').update({
+          'status': 'logged_out',
+          'push_token': null,
+          'updated_at': DateTime.now().toUtc().toIso8601String(),
+        }).eq('user_id', userId);
+        log('✅ [Auth] Profile updated successfully');
       } catch (e) {
-        log('⚠️ [Auth] Failed to set offline status on signOut: $e');
+        log('⚠️ [Auth] Failed to update status on signOut: $e');
       }
     }
-    log('🔐 [Auth] signOut');
+
+    // Stop native services and clear credentials
+    await NativeLifecycleService.clearCredentials();
+    
+    log('🔐 [Auth] Finalizing signOut');
     await _client.auth.signOut();
+    log('✅ [Auth] Logged out from Supabase');
   }
 
   // ── User Info ────────────────────────────────────────────
@@ -470,13 +482,22 @@ class SupabaseService {
         'updated_at': location.timestamp.toIso8601String(),
       }, onConflict: 'user_id');
 
-      // Update last_seen on users table
+      // Update last_seen on users table (legacy)
       await _client
           .from(_tUsers)
           .update({'last_seen': location.timestamp.toIso8601String()})
           .eq('id', location.userId);
 
-      log('✅ [DB] Location saved to user_locations + latest_locations + status updated');
+      // Update presence on profiles table
+      await _client
+          .from('profiles')
+          .update({
+            'status': 'online',
+            'updated_at': DateTime.now().toUtc().toIso8601String()
+          })
+          .eq('user_id', location.userId);
+
+      log('✅ [DB] Location saved and presence refreshed');
     } catch (e) {
       log('❌ [DB] updateUserLocation error: $e');
     }

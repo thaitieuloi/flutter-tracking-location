@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import 'config/supabase_config.dart';
 import 'providers/app_provider.dart';
 import 'services/supabase_service.dart';
+import 'services/native_lifecycle_service.dart';
 import 'screens/login_screen.dart';
 import 'screens/map_screen.dart';
 
@@ -81,21 +82,41 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
     // Listen to Auth state changes to set status
     _authStream.listen((data) {
       if (data.event == AuthChangeEvent.signedIn || data.session != null) {
-        _updateStatus('online');
+        _updateStatus('online', setToken: true);
+        _syncNativeCredentials(data.session);
       } else if (data.event == AuthChangeEvent.signedOut) {
         _updateStatus('offline');
+        NativeLifecycleService.clearCredentials();
       }
     });
 
     // Initial check
-    if (Supabase.instance.client.auth.currentSession != null) {
-      _updateStatus('online');
+    final currentSession = Supabase.instance.client.auth.currentSession;
+    if (currentSession != null) {
+      _updateStatus('online', setToken: true);
+      _syncNativeCredentials(currentSession);
     }
+  }
+
+  /// Pass credentials to native Android layer so ProcessLifecycleOwner
+  /// can send status updates even when the Dart VM is killed.
+  void _syncNativeCredentials(Session? session) {
+    if (session == null) return;
+    final userId = session.user.id;
+    final accessToken = session.accessToken;
+    
+    NativeLifecycleService.saveCredentials(
+      supabaseUrl: SupabaseConfig.url,
+      supabaseKey: SupabaseConfig.anonKey,
+      userId: userId,
+      accessToken: accessToken,
+    );
+    log('📱 [App] Native lifecycle credentials synced for: $userId');
   }
 
   @override
   void dispose() {
-    _updateStatus('idle');
+    _updateStatus('offline');
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -107,22 +128,28 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
     log('📱 [App] Lifecycle state changed to: $state');
     switch (state) {
       case AppLifecycleState.resumed:
-        _updateStatus('online');
+        _updateStatus('online'); // 1. Online - Xanh lá
+        // Re-sync credentials (token may have refreshed)
+        final session = Supabase.instance.client.auth.currentSession;
+        if (session != null) {
+          _syncNativeCredentials(session);
+        }
         break;
       case AppLifecycleState.inactive:
       case AppLifecycleState.paused:
       case AppLifecycleState.hidden:
-        _updateStatus('idle');
+        _updateStatus('idle'); // 2. Background - Cam
         break;
       case AppLifecycleState.detached:
-        // Even if detached, background service might still be alive
-        _updateStatus('idle');
+        // Note: This update may not complete before the Dart VM dies.
+        // The native ProcessLifecycleOwner handles this more reliably.
+        _updateStatus('offline'); // 3. App closed - Tím
         break;
     }
   }
 
-  void _updateStatus(String status) {
-    if (_lastStatus == status) {
+  void _updateStatus(String status, {bool setToken = false}) {
+    if (_lastStatus == status && !setToken) {
       log('⏭️ [App] Skipping redundant status update: $status');
       return;
     }
@@ -130,14 +157,21 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
     final userId = Supabase.instance.client.auth.currentUser?.id;
     if (userId != null) {
       _lastStatus = status;
-      log('🔄 [App] Requesting status update: $userId -> $status');
-      // We use await to ensure chronological order if this was in an async block,
-      // but here we just want to ensure we don't spam.
-      _supabaseService.updateUserStatus(userId, status).then((_) {
+      log('🔄 [App] Requesting status update: $userId -> $status (setToken: $setToken)');
+      
+      final Map<String, dynamic> data = {
+        'status': status,
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
+      };
+      if (setToken) {
+        data['push_token'] = 'active_session_flutter';
+      }
+
+      Supabase.instance.client.from('profiles').update(data).eq('user_id', userId).then((_) {
         log('✅ [App] Status update completed: $status');
       }).catchError((e) {
         log('❌ [App] Status update failed: $status | $e');
-        _lastStatus = null; // Clear on error to allow retry
+        _lastStatus = null;
       });
     }
   }
@@ -168,3 +202,4 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
     );
   }
 }
+

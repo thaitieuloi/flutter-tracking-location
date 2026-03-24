@@ -11,6 +11,17 @@
 - 🔔 **Thông báo** - Nhận thông báo khi thành viên vào/ra khỏi vùng an toàn
 - 📱 **Cross-platform** - Android & iOS
 
+## 📍 Định nghĩa 4 Trạng Thái Hiện Diện (Presence)
+
+Hệ thống sử dụng cơ chế đồng bộ hóa giữa Flutter, Native Android (Service) và Web Dashboard để phân biệt 4 trạng thái:
+
+| ID status | Màu sắc | Hành vi | Logic kỹ thuật |
+| :--- | :--- | :--- | :--- |
+| `online` | 🟢 Xanh lá | Đang mở | Flutter `resumed` |
+| `idle` | 🟠 Cam | Home/Task | Native `onStop` |
+| `offline` | 🟣 Tím | Swipe Quit | Native `onTaskRemoved` |
+| `logged_out` | ⚪ Xám | Logout | Flutter `signOut` |
+
 ## 🛠️ Tech Stack
 
 | Component | Technology |

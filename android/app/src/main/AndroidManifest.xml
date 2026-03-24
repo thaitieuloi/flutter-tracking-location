@@ -7,10 +7,11 @@
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     
     <application
         android:label="Family Tracker"
-        android:name="${applicationName}"
+        android:name=".FamilyTrackerApp"
         android:icon="@mipmap/ic_launcher"
         android:enableOnBackInvokedCallback="true">
         
@@ -36,6 +37,21 @@
             </intent-filter>
         </activity>
         
+        <!-- Service giám sát các sự kiện đặc biệt (Swipe close) -->
+        <service 
+            android:name=".LifecycleService"
+            android:enabled="true"
+            android:exported="false"
+            android:stopWithTask="false"
+            android:foregroundServiceType="location" />
+
+        <!-- Đảm bảo service của geolocator cũng có type location -->
+        <service
+            android:name="com.baseflow.geolocator.GeolocatorLocationService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="location" />
+
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
