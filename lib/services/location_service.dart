@@ -66,7 +66,7 @@ class LocationService {
     try {
       // 1. Try Nominatim (Primary - same as web)
       final url = Uri.parse(
-        'https://nominatim.openstreetmap.org/reverse?lat=$latitude&lon=$longitude&format=json&accept-language=vi',
+        'https://nominatim.openstreetmap.org/reverse?lat=$latitude&lon=$longitude&format=json&accept-language=vi&addressdetails=1&extratags=1',
       );
       
       final response = await http.get(
@@ -79,13 +79,27 @@ class LocationService {
         final addr = data['address'] ?? {};
         
         final parts = <String>[];
+        
+        // 1. Specific point (House number or Place name / POI)
+        final extratags = data['extratags'] ?? {};
+        final houseNum = addr['house_number'] ?? extratags['addr:housenumber'] ?? addr['building'];
+        final poiName = addr['amenity'] ?? addr['shop'] ?? addr['office'] ?? addr['tourism'] ?? addr['leisure'] ?? addr['industrial'];
+        
+        final point = (houseNum != null && poiName != null) 
+          ? '$houseNum, $poiName' 
+          : (houseNum ?? poiName);
+        if (point != null) parts.add(point);
+
+        // 2. Road
         if (addr['road'] != null) parts.add(addr['road']);
-        if (addr['suburb'] != null || addr['quarter'] != null || addr['neighbourhood'] != null) {
-          parts.add(addr['suburb'] ?? addr['quarter'] ?? addr['neighbourhood']);
-        }
-        if (addr['city_district'] != null || addr['town'] != null || addr['village'] != null) {
-          parts.add(addr['city_district'] ?? addr['town'] ?? addr['village']);
-        }
+
+        // 3. Area (Suburb, Ward, etc.)
+        final area = addr['suburb'] ?? addr['quarter'] ?? addr['neighbourhood'] ?? addr['hamlet'] ?? addr['village'];
+        if (area != null) parts.add(area);
+
+        // 4. District/Town
+        final district = addr['city_district'] ?? addr['town'] ?? addr['district'];
+        if (district != null) parts.add(district);
 
         if (parts.isNotEmpty) {
           return parts.join(', ');
