@@ -144,11 +144,9 @@ class AppProvider extends ChangeNotifier {
         },
       );
 
-      // 9. Resume tracking if was active
-      if (_isLocationSharing) {
-        _svc.log('📍 [App] Resuming location sharing');
-        startLocationSharing();
-      }
+      // Start background tracking automatically for history/family monitoring
+      _svc.log('📍 [App] Automatically starting background tracking');
+      startLocationSharing();
     } catch (e) {
       _svc.log('❌ [App] loadUserData error: $e');
     } finally {

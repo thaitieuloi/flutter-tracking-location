@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/models.dart';
 
@@ -207,11 +208,18 @@ class SupabaseService {
   /// FIX: Get existing family_id from DB. Create new family ONLY if user has none.
   Future<String?> getOrCreateFamilyId(String userId, String userName) async {
     try {
-      final userData = await _client.from(_tUsers).select('family_id').eq('id', userId).maybeSingle();
-      String? familyId = userData?['family_id'] as String?;
+      // Check family_members table (Source of Truth)
+      final membership = await _client.from(_tFamilyMembers)
+          .select('family_id')
+          .eq('user_id', userId)
+          .maybeSingle();
+          
+      String? familyId = membership?['family_id'] as String?;
 
       if (familyId != null && familyId.isNotEmpty) {
-        log('✅ [DB] Existing family_id: $familyId');
+        log('✅ [DB] Existing family_id from family_members: $familyId');
+        // Ensure legacy table is in sync
+        await _client.from(_tUsers).update({'family_id': familyId}).eq('id', userId);
         return familyId;
       }
 
@@ -225,17 +233,13 @@ class SupabaseService {
 
       familyId = familyRes['id'] as String;
 
+      // Sync both tables
       await _client.from(_tUsers).update({'family_id': familyId}).eq('id', userId);
-
-      try {
-        await _client.from(_tFamilyMembers).upsert({
-          'user_id': userId,
-          'family_id': familyId,
-          'role': 'admin',
-        });
-      } catch (e) {
-        log('⚠️ [DB] family_members insert skipped (RLS): $e');
-      }
+      await _client.from(_tFamilyMembers).upsert({
+        'user_id': userId,
+        'family_id': familyId,
+        'role': 'admin',
+      });
 
       log('✅ [DB] Created family: $familyId (code: $code)');
       return familyId;
@@ -274,17 +278,14 @@ class SupabaseService {
       }
 
       final familyId = familyRow['id'] as String;
+      
+      // Update both for consistency
       await _client.from(_tUsers).update({'family_id': familyId}).eq('id', userId);
-
-      try {
-        await _client.from(_tFamilyMembers).upsert({
-          'user_id': userId,
-          'family_id': familyId,
-          'role': 'member',
-        });
-      } catch (e) {
-        log('⚠️ [DB] family_members insert skipped (RLS): $e');
-      }
+      await _client.from(_tFamilyMembers).upsert({
+        'user_id': userId,
+        'family_id': familyId,
+        'role': 'member',
+      });
 
       log('✅ [DB] joinFamilyByCode success: joined ${familyRow['name']}');
       return true;
@@ -298,15 +299,15 @@ class SupabaseService {
     required String familyId,
     required void Function(List<FamilyMember>) onData,
   }) {
-    log('📡 [Realtime] Subscribing to users by family: $familyId');
+    log('📡 [Realtime] Subscribing to family_members for: $familyId');
     _fetchFamilyMembers(familyId).then(onData);
 
     return _client
-        .channel('users_family_$familyId')
+        .channel('family_members_$familyId')
         .onPostgresChanges(
           event: PostgresChangeEvent.all,
           schema: 'public',
-          table: _tUsers,
+          table: _tFamilyMembers,
           filter: PostgresChangeFilter(
             type: PostgresChangeFilterType.eq,
             column: 'family_id',
@@ -321,45 +322,33 @@ class SupabaseService {
           callback: (_) => _fetchFamilyMembers(familyId).then(onData),
         )
         .subscribe((status, [error]) {
-          log('📡 [Realtime] users_family status=$status error=$error');
+          log('📡 [Realtime] family_members status=$status error=$error');
         });
   }
 
   Future<List<FamilyMember>> _fetchFamilyMembers(String familyId) async {
     try {
-      log('📡 [DB] fetchFamilyMembers for family: $familyId');
+      log('📡 [DB] fetchFamilyMembers (New Logic) for: $familyId');
       
-      List<dynamic> rows;
-      try {
-        // Attempt to fetch users and profiles in one go using join
-        rows = await _client
-            .from(_tUsers)
-            .select('*, profiles!user_id(*)')
-            .eq('family_id', familyId);
-      } catch (joinErr) {
-        log('⚠️ [DB] Joined fetch failed (likely missing FK): $joinErr. Falling back to separate queries.');
-        
-        // Fallback: Fetch users only
-        rows = await _client
-            .from(_tUsers)
-            .select('*')
-            .eq('family_id', familyId);
-        
-        if (rows.isNotEmpty) {
-          final userIds = rows.map((r) => r['id'].toString()).toList();
-          final profiles = await _client
-              .from('profiles')
-              .select('*')
-              .inFilter('user_id', userIds);
+      // 1. Get member userIds from family_members table (Source of Truth)
+      final memberRows = await _client
+          .from(_tFamilyMembers)
+          .select('user_id, role')
+          .eq('family_id', familyId);
           
-          final profileMap = {for (var p in (profiles as List)) p['user_id'].toString(): p};
-          
-          // Merge profiles into rows
-          for (var row in rows) {
-            row['profiles'] = profileMap[row['id'].toString()];
-          }
-        }
+      if (memberRows == null || (memberRows as List).isEmpty) {
+        log('⚠️ [DB] No members found in family_members');
+        return [];
       }
+      
+      final userIds = (memberRows as List).map((m) => m['user_id'].toString()).toList();
+      final roles = {for (var m in (memberRows as List)) m['user_id'].toString(): m['role']};
+
+      // 2. Fetch profiles + users for those IDs
+      final rows = await _client
+          .from(_tUsers)
+          .select('*, profiles!user_id(*)')
+          .inFilter('id', userIds);
 
       final members = (rows as List).map((row) {
         // Safe access to joined profile
@@ -380,6 +369,9 @@ class SupabaseService {
           // Use profile updated_at as a fallback for last_seen if it's fresher
           combined['profile_updated_at'] = profile['updated_at'];
         }
+        
+        final userId = row['id'].toString();
+        combined['role'] = roles[userId] ?? 'member';
         
         return _userRowToMember(combined);
       }).toList();
@@ -873,6 +865,7 @@ class SupabaseService {
       isLocationSharing: data['is_location_sharing'] ?? false,
       lastSeen: _getLatestTimestamp(data['last_seen'], data['profile_updated_at']),
       status: data['status'] ?? 'offline',
+      role: data['role'] ?? 'member',
     );
   }
 
@@ -885,26 +878,14 @@ class SupabaseService {
     return d1.isAfter(d2) ? d1 : d2;
   }
 
-  Future<void> updateProfile({required String userId, String? name, String? photoUrl}) async {
-    try {
-      log('🔄 [DB] updateProfile: $userId');
-      final updates = <String, dynamic>{};
-      if (name != null) updates['name'] = name;
-      if (photoUrl != null) updates['photo_url'] = photoUrl;
-
-      if (updates.isEmpty) return;
-
-      await _client.from(_tUsers).update(updates).eq('id', userId);
-      log('✅ [DB] updateProfile success');
-    } catch (e) {
-      log('❌ [DB] updateProfile error: $e');
-    }
-  }
-
   Future<void> updateUserStatus(String userId, String status) async {
     try {
       log('🔄 [DB] updateUserStatus: $userId -> $status');
-      await _client.from('profiles').update({'status': status}).eq('user_id', userId);
+      final now = DateTime.now().toUtc().toIso8601String();
+      await _client.from('profiles').update({
+        'status': status,
+        'updated_at': now,
+      }).eq('user_id', userId);
     } catch (e) {
       log('❌ [DB] updateUserStatus error: $e');
     }

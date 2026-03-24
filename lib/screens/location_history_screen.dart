@@ -68,7 +68,7 @@ class _LocationHistoryScreenState extends State<LocationHistoryScreen> with Tick
 
       final history = await provider.getLocationHistory(
         widget.member.id, 
-        limit: 1000, 
+        limit: 3000, // Increased to ensure coverage for a full week
         startTime: start.toUtc(), 
         endTime: end.toUtc()
       );
@@ -104,38 +104,36 @@ class _LocationHistoryScreenState extends State<LocationHistoryScreen> with Tick
 
     if (history.isEmpty) return;
 
-    // Group points by day (0=Sunday, 1=Monday, etc. based on fl_chart indexing of 0-6 matching our labels)
-    // Actually our labels are CN, T2, T3... (Sun...Sat)
-    // DateTime.weekday returns 1=Mon...7=Sun.
-    // Let's normalize to 0=Sun, 1=Mon...6=Sat
-    
     for (int i = 0; i < 7; i++) {
        _dailyMaxSpeeds[i] = 0;
        _dailyDistances[i] = 0;
        _dailyEvents[i] = 0;
     }
 
-    // Rough calculation from history
-    for (int i = 0; i < history.length - 1; i++) {
-       final p1 = history[i];
-       final p2 = history[i+1];
+    // Points are reversed (latest first), so chronological is history.reversed
+    final chron = history.reversed.toList();
+
+    for (int i = 0; i < chron.length - 1; i++) {
+       final p1 = chron[i];
+       final p2 = chron[i+1];
        
-       // Normalize weekday to 0=Sun...6=Sat
+       // Normalize weekday: 1=Mon...7=Sun. Map to 0=Sun...6=Sat
        int dayIndex = p1.timestamp.toLocal().weekday % 7; 
        
-       // Mock speed calculation if not present (simple distance/time)
        double dist = _calculateDistance(p1.latitude, p1.longitude, p2.latitude, p2.longitude);
-       double timeHours = p1.timestamp.difference(p2.timestamp).inSeconds.abs() / 3600.0;
-       double speed = timeHours > 0 ? (dist / timeHours) : 0;
-       if (speed > 120) speed = 0; // Filter noise
+       double timeHours = p2.timestamp.difference(p1.timestamp).inSeconds.abs() / 3600.0;
        
-       _dailyDistances[dayIndex] = (_dailyDistances[dayIndex] ?? 0) + dist;
-       if (speed > (_dailyMaxSpeeds[dayIndex] ?? 0)) {
-         _dailyMaxSpeeds[dayIndex] = speed;
+       if (dist > 0.01) { // Ignore tiny jitter
+         _dailyDistances[dayIndex] = (_dailyDistances[dayIndex] ?? 0) + dist;
+         
+         double speed = timeHours > 0.001 ? (dist / timeHours) : 0;
+         if (speed > 5 && speed < 160) { // Filter noise and stationary jitter
+           if (speed > (_dailyMaxSpeeds[dayIndex] ?? 0)) {
+             _dailyMaxSpeeds[dayIndex] = speed;
+           }
+           if (speed > 80) _dailyEvents[dayIndex] = (_dailyEvents[dayIndex] ?? 0) + 1;
+         }
        }
-       
-       // Mock some events based on speed
-       if (speed > 60) _dailyEvents[dayIndex] = (_dailyEvents[dayIndex] ?? 0) + 1;
     }
 
     _dailyMaxSpeeds.forEach((k, v) {
@@ -159,34 +157,86 @@ class _LocationHistoryScreenState extends State<LocationHistoryScreen> with Tick
       return;
     }
 
-    final List<Trip> trips = [];
-    final chronologicalHistory = history.reversed.toList();
-    if (chronologicalHistory.isEmpty) return;
+    final chron = history.reversed.toList();
+    List<Trip> segments = [];
     
-    List<UserLocation> currentTripPoints = [chronologicalHistory.first];
+    // Constants
+    const double stayRadius = 100.0;
+    const int stayDurationMin = 10;
+    const int gapThresholdMin = 15;
+    const double minTripDist = 500.0;
 
-    for (int i = 1; i < chronologicalHistory.length; i++) {
-      final prev = chronologicalHistory[i - 1];
-      final curr = chronologicalHistory[i];
-      final gap = curr.timestamp.difference(prev.timestamp).inMinutes;
-
-      if (gap > 10) {
-        if (currentTripPoints.length > 3) {
-          trips.add(Trip(points: List.from(currentTripPoints)));
-        }
-        currentTripPoints = [curr];
-      } else {
-        currentTripPoints.add(curr);
+    int i = 0;
+    while (i < chron.length) {
+      int startIdx = i;
+      int j = i + 1;
+      
+      while (j < chron.length) {
+        final prev = chron[j - 1];
+        final curr = chron[j];
+        final gap = curr.timestamp.difference(prev.timestamp).inMinutes;
+        
+        if (gap > gapThresholdMin) break;
+        
+        final distFromStart = _calculateDistance(
+          chron[startIdx].latitude, chron[startIdx].longitude,
+          curr.latitude, curr.longitude
+        ) * 1000;
+        
+        if (distFromStart > stayRadius) break;
+        j++;
       }
+
+      int duration = chron[j - 1].timestamp.difference(chron[startIdx].timestamp).inMinutes;
+      
+      if (duration >= stayDurationMin) {
+        segments.add(Trip(points: chron.sublist(startIdx, j), type: TripType.stay));
+      } else {
+        // If not a stay, it's a movement/trip until the next stay or gap
+        int k = j;
+        while (k < chron.length) {
+          final prev = chron[k - 1];
+          final curr = chron[k];
+          final gap = curr.timestamp.difference(prev.timestamp).inMinutes;
+          if (gap > gapThresholdMin) break;
+          
+          // Check if a stay starts here
+          bool stayStarts = false;
+          int lookahead = k + 1;
+          while (lookahead < chron.length) {
+            if (chron[lookahead].timestamp.difference(chron[k].timestamp).inMinutes > gapThresholdMin) break;
+            if (_calculateDistance(chron[k].latitude, chron[k].longitude, chron[lookahead].latitude, chron[lookahead].longitude) * 1000 > stayRadius) break;
+            if (chron[lookahead].timestamp.difference(chron[k].timestamp).inMinutes >= stayDurationMin) {
+              stayStarts = true;
+              break;
+            }
+            lookahead++;
+          }
+          if (stayStarts) break;
+          k++;
+        }
+        segments.add(Trip(points: chron.sublist(startIdx, k), type: TripType.trip));
+        j = k;
+      }
+      i = j;
     }
 
-    if (currentTripPoints.length > 3) {
-      trips.add(Trip(points: List.from(currentTripPoints)));
+    // Filter tiny trips and merge them into stays
+    List<Trip> refined = [];
+    for (var seg in segments) {
+      if (seg.type == TripType.trip) {
+        bool isTiny = seg.distanceMeters < minTripDist && seg.durationMinutes < 10;
+        if (isTiny && refined.isNotEmpty && refined.last.type == TripType.stay) {
+          // Merge into previous stay
+          final prevPoints = List<UserLocation>.from(refined.last.points)..addAll(seg.points);
+          refined[refined.length - 1] = Trip(points: prevPoints, type: TripType.stay);
+          continue;
+        }
+      }
+      refined.add(seg);
     }
 
-    _trips = trips.reversed.toList();
-    
-    // Asynchronously fetch addresses for start/end points
+    _trips = refined.reversed.toList();
     _enrichTripsWithAddresses();
   }
 
@@ -622,13 +672,11 @@ class _LocationHistoryScreenState extends State<LocationHistoryScreen> with Tick
                   itemCount: _trips.length,
                   itemBuilder: (context, index) {
                     final trip = _trips[index];
-                    return Column(
-                      children: [
-                        if (index == 0) _buildStayCard(trip),
-                        _buildTripCard(trip, colorScheme),
-                        if (index < _trips.length - 1) _buildStayCard(_trips[index + 1], prevTrip: trip),
-                      ],
-                    );
+                    if (trip.type == TripType.stay) {
+                      return _buildStayCard(trip);
+                    } else {
+                      return _buildTripCard(trip, colorScheme);
+                    }
                   },
                 ),
         ),
@@ -670,11 +718,8 @@ class _LocationHistoryScreenState extends State<LocationHistoryScreen> with Tick
     );
   }
 
-  Widget _buildStayCard(Trip nextTrip, {Trip? prevTrip}) {
-    final startTime = prevTrip != null ? prevTrip.endTime : nextTrip.startTime.subtract(const Duration(hours: 2));
-    final endTime = nextTrip.startTime;
-    final duration = endTime.difference(startTime).inMinutes;
-    if (duration < 5) return const SizedBox();
+  Widget _buildStayCard(Trip stayTrip) {
+    final duration = stayTrip.durationMinutes;
 
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 8),
@@ -702,7 +747,7 @@ class _LocationHistoryScreenState extends State<LocationHistoryScreen> with Tick
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  _getDisplayAddress(nextTrip.points.first),
+                  _getDisplayAddress(stayTrip.points.first),
                   style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.black87),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
@@ -1030,10 +1075,32 @@ class _TripPlaybackSheetState extends State<_TripPlaybackSheet> with TickerProvi
   }
 }
 
+enum TripType { trip, stay }
+
 class Trip {
   final List<UserLocation> points;
-  Trip({required this.points});
+  final TripType type;
+  
+  Trip({required this.points, this.type = TripType.trip});
+  
   DateTime get startTime => points.isEmpty ? DateTime.now() : points.first.timestamp.toLocal();
   DateTime get endTime => points.isEmpty ? DateTime.now() : points.last.timestamp.toLocal();
   int get durationMinutes => endTime.difference(startTime).inMinutes;
+
+  double get distanceMeters {
+    if (points.length < 2) return 0;
+    double d = 0;
+    for (int i = 0; i < points.length - 1; i++) {
+      d += _calculateDistanceBetween(
+        points[i].latitude, points[i].longitude,
+        points[i+1].latitude, points[i+1].longitude,
+      );
+    }
+    return d * 1000;
+  }
+
+  static double _calculateDistanceBetween(double lat1, double lon1, double lat2, double lon2) {
+    const distance = Distance();
+    return distance.as(LengthUnit.Meter, LatLng(lat1, lon1), LatLng(lat2, lon2)) / 1000.0;
+  }
 }

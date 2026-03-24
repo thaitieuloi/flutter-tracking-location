@@ -133,11 +133,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           : null,
                     ),
                     if (_isUploading)
-                      const Positioned.fill(
+                      Positioned.fill(
                         child: ClipOval(
                           child: Container(
                             color: Colors.black26,
-                            child: Center(child: CircularProgressIndicator(color: Colors.white)),
+                            child: const Center(child: CircularProgressIndicator(color: Colors.white)),
                           ),
                         ),
                       ),

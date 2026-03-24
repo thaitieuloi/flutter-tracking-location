@@ -10,6 +10,7 @@ class FamilyMember {
   final bool isLocationSharing;
   final DateTime? lastSeen;
   final String status; // 'online', 'idle', 'offline'
+  final String role;   // 'admin', 'member'
 
   FamilyMember({
     required this.id,
@@ -20,6 +21,7 @@ class FamilyMember {
     this.isLocationSharing = false,
     this.lastSeen,
     this.status = 'offline',
+    this.role = 'member',
   });
 
   Map<String, dynamic> toMap() {
@@ -32,6 +34,7 @@ class FamilyMember {
       'is_location_sharing': isLocationSharing,
       'last_seen': lastSeen?.toIso8601String(),
       'status': status,
+      'role': role,
     };
   }
 
@@ -60,6 +63,7 @@ class FamilyMember {
           ? DateTime.tryParse(map['last_seen'].toString())
           : null,
       status: map['status'] ?? 'offline',
+      role: map['role'] ?? 'member',
     );
   }
 
@@ -72,6 +76,7 @@ class FamilyMember {
     bool? isLocationSharing,
     DateTime? lastSeen,
     String? status,
+    String? role,
   }) {
     return FamilyMember(
       id: id ?? this.id,
@@ -82,6 +87,7 @@ class FamilyMember {
       isLocationSharing: isLocationSharing ?? this.isLocationSharing,
       lastSeen: lastSeen ?? this.lastSeen,
       status: status ?? this.status,
+      role: role ?? this.role,
     );
   }
 }
