@@ -1,5 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_background_service/flutter_background_service.dart';
+import '../config/supabase_config.dart';
 import '../models/models.dart';
 import '../services/supabase_service.dart';
 import '../services/location_service.dart';
@@ -146,6 +149,19 @@ class AppProvider extends ChangeNotifier {
 
       // Start background tracking automatically for history/family monitoring
       _svc.log('📍 [App] Automatically starting background tracking');
+      
+      // Save credentials for background isolate
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('supabase_url', SupabaseConfig.url);
+      await prefs.setString('supabase_anon_key', SupabaseConfig.anonKey);
+      await prefs.setString('current_user_id', _currentUser!.id);
+      
+      // Save access token for background isolate authentication
+      final session = Supabase.instance.client.auth.currentSession;
+      if (session != null) {
+        await prefs.setString('access_token', session.accessToken);
+      }
+      
       startLocationSharing();
     } catch (e) {
       _svc.log('❌ [App] loadUserData error: $e');
@@ -264,17 +280,36 @@ class AppProvider extends ChangeNotifier {
       notifyListeners();
     }, _currentUser!.id, periodicSeconds: 30);
 
+    // Also start background service (for app kill survival)
+    final service = FlutterBackgroundService();
+    if (!await service.isRunning()) {
+      await service.startService();
+    }
+
     notifyListeners();
-    _svc.log('✅ [App] Location sharing started (periodic: 30s)');
+    _svc.log('✅ [App] Location sharing started (periodic: 30s + BackgroundService)');
   }
 
   Future<void> stopLocationSharing() async {
     if (_currentUser == null) return;
     _isLocationSharing = false;
     await _svc.toggleLocationSharing(_currentUser!.id, false);
-    _locationSvc.stopTracking();
+    
+    stopForegroundTrackingOnly();
+
+    // Stop background service
+    final service = FlutterBackgroundService();
+    service.invoke('stopService');
+
     notifyListeners();
     _svc.log('🛑 [App] Location sharing stopped');
+  }
+
+  /// Stops ONLY the foreground tracking (stream/timer in main isolate)
+  /// useful when app is detached but we want BackgroundService to continue.
+  void stopForegroundTrackingOnly() {
+    _locationSvc.stopTracking();
+    _svc.log('⏸️ [App] Foreground tracking paused (Isolate specific)');
   }
 
   Future<UserLocation?> getCurrentLocation() async {

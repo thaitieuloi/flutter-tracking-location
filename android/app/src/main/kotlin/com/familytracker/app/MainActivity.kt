@@ -16,7 +16,19 @@ class MainActivity : FlutterActivity() {
 
     override fun onCreate(savedInstanceState: android.os.Bundle?) {
         super.onCreate(savedInstanceState)
-        // Kích hoạt LifecycleService để giám sát việc vuốt thoát (Swipe)
+        
+        // 1. Pre-create Notification Channel for background tracking to avoid "Bad notification" crash on Android 14
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            val channelId = "my_foreground"
+            val channelName = "Location Tracking"
+            val channel = android.app.NotificationChannel(
+                channelId, channelName, android.app.NotificationManager.IMPORTANCE_LOW
+            )
+            val manager = getSystemService(android.app.NotificationManager::class.java)
+            manager.createNotificationChannel(channel)
+        }
+
+        // 2. Kích hoạt LifecycleService để giám sát việc vuốt thoát (Swipe)
         val serviceIntent = android.content.Intent(this, LifecycleService::class.java)
         startService(serviceIntent)
     }

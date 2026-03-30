@@ -29,8 +29,9 @@ class LifecycleService : Service() {
     override fun onTaskRemoved(rootIntent: Intent?) {
         Log.d(TAG, "🎯 EVENT: App Swiped Away (Swipe thoát app)")
         
-        // Gọi lệnh update status lên Supabase đồng bộ trước khi chết hẳn
-        (application as? FamilyTrackerApp)?.updateStatusSync("offline")
+        // Không gọi updateStatusSync("offline") vì BackgroundService vẫn có thể đang chạy ngầm
+        // để gửi tọa độ. Chúng ta để cho BackgroundService tự quyết định status (online)
+        // khi nó gửi tọa độ tiếp theo.
         
         super.onTaskRemoved(rootIntent)
         

@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:battery_plus/battery_plus.dart';
+import 'package:permission_handler/permission_handler.dart';
 import '../models/models.dart';
 
 /// Service for managing device location.
@@ -25,6 +26,9 @@ class LocationService {
       return false;
     }
 
+    // Request Notification permission for Android 13+
+    await Permission.notification.request();
+
     permission = await Geolocator.checkPermission();
 
     if (permission == LocationPermission.denied) {
@@ -36,6 +40,16 @@ class LocationService {
 
     if (permission == LocationPermission.deniedForever) {
       return false;
+    }
+
+    // Proactively request background permission if only 'whileInUse' is granted
+    if (permission == LocationPermission.whileInUse) {
+      permission = await Geolocator.requestPermission();
+      if (permission != LocationPermission.always) {
+        // Log it, but technically whileInUse + foreground notification works
+        // however 'always' is far more reliable
+        print('LocationService: Always permission NOT granted, but will attempt with foreground service');
+      }
     }
 
     return true;

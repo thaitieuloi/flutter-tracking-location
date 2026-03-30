@@ -7,6 +7,7 @@ import 'config/supabase_config.dart';
 import 'providers/app_provider.dart';
 import 'services/supabase_service.dart';
 import 'services/native_lifecycle_service.dart';
+import 'services/background_service.dart';
 import 'screens/login_screen.dart';
 import 'screens/map_screen.dart';
 
@@ -24,6 +25,9 @@ void main() async {
     url: SupabaseConfig.url,
     anonKey: SupabaseConfig.anonKey,
   );
+  
+  // Initialize Background Location Service
+  await BackgroundServiceManager.initialize();
 
   runApp(const MyApp());
 }
@@ -141,9 +145,11 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
         _updateStatus('idle'); // 2. Background - Cam
         break;
       case AppLifecycleState.detached:
-        // Note: This update may not complete before the Dart VM dies.
-        // The native ProcessLifecycleOwner handles this more reliably.
-        _updateStatus('offline'); // 3. App closed - Tím
+        _updateStatus('offline');
+        // Stop foreground stream to avoid JNI errors on background
+        try {
+          Provider.of<AppProvider>(context, listen: false).stopForegroundTrackingOnly();
+        } catch (_) {}
         break;
     }
   }
