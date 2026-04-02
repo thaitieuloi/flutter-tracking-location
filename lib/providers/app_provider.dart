@@ -273,9 +273,14 @@ class AppProvider extends ChangeNotifier {
     _isLocationSharing = true;
     await _svc.toggleLocationSharing(_currentUser!.id, true);
 
-    _locationSvc.startTracking((location) {
+    _locationSvc.startTracking((location) async {
       _svc.log('📍 [Tracking] New position: ${location.latitude}, ${location.longitude}');
-      _svc.updateUserLocation(location);
+      
+      final prefs = await SharedPreferences.getInstance();
+      final isForeground = prefs.getBool('is_app_foreground') ?? true;
+      final status = isForeground ? 'online' : 'idle';
+      
+      _svc.updateUserLocation(location, status: status);
       _memberLocations[_currentUser!.id] = location;
       notifyListeners();
     }, _currentUser!.id, periodicSeconds: 30);

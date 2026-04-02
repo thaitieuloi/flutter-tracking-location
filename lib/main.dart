@@ -8,6 +8,7 @@ import 'providers/app_provider.dart';
 import 'services/supabase_service.dart';
 import 'services/native_lifecycle_service.dart';
 import 'services/background_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'screens/login_screen.dart';
 import 'screens/map_screen.dart';
 
@@ -130,10 +131,13 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     log('📱 [App] Lifecycle state changed to: $state');
+    
+    // Update a reliable flag for BackgroundService to read
+    _updateForegroundFlag(state == AppLifecycleState.resumed);
+
     switch (state) {
       case AppLifecycleState.resumed:
-        _updateStatus('online'); // 1. Online - Xanh lá
-        // Re-sync credentials (token may have refreshed)
+        _updateStatus('online'); // Foreground - Xanh lá
         final session = Supabase.instance.client.auth.currentSession;
         if (session != null) {
           _syncNativeCredentials(session);
@@ -142,16 +146,21 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
       case AppLifecycleState.inactive:
       case AppLifecycleState.paused:
       case AppLifecycleState.hidden:
-        _updateStatus('idle'); // 2. Background - Cam
+        _updateStatus('idle'); // Background but not killed - Cam
         break;
       case AppLifecycleState.detached:
-        _updateStatus('offline');
-        // Stop foreground stream to avoid JNI errors on background
+        _updateStatus('background'); // App closed/killed - Tím
         try {
           Provider.of<AppProvider>(context, listen: false).stopForegroundTrackingOnly();
         } catch (_) {}
         break;
     }
+  }
+
+  Future<void> _updateForegroundFlag(bool isForeground) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('is_app_foreground', isForeground);
+    log('📱 [App] is_app_foreground flag set to: $isForeground');
   }
 
   void _updateStatus(String status, {bool setToken = false}) {

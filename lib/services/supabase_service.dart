@@ -459,9 +459,9 @@ class SupabaseService {
 
   // ── Location ─────────────────────────────────────────────
 
-  Future<void> updateUserLocation(UserLocation location) async {
+  Future<void> updateUserLocation(UserLocation location, {String status = 'online'}) async {
     try {
-      log('📍 [DB] updateUserLocation: ${location.userId} lat=${location.latitude} lng=${location.longitude}');
+      log('📍 [DB] updateUserLocation: ${location.userId} lat=${location.latitude} lng=${location.longitude} status=$status');
 
       // Insert into user_locations (history)
       await _client.from(_tUserLocations).insert({
@@ -488,16 +488,16 @@ class SupabaseService {
           .update({'last_seen': location.timestamp.toIso8601String()})
           .eq('id', location.userId);
 
-      // Update presence on profiles table
+      // Update presence on profiles table with the provided status
       await _client
           .from('profiles')
           .update({
-            'status': 'online',
+            'status': status,
             'updated_at': DateTime.now().toUtc().toIso8601String()
           })
           .eq('user_id', location.userId);
 
-      log('✅ [DB] Location saved and presence refreshed');
+      log('✅ [DB] Location saved and presence refreshed as $status');
     } catch (e) {
       log('❌ [DB] updateUserLocation error: $e');
     }

@@ -88,6 +88,10 @@ Future<void> _sendUpdate(ServiceInstance service, SupabaseClient supabase, Batte
 
     final batteryLevel = await battery.batteryLevel;
 
+    final prefs = await SharedPreferences.getInstance();
+    final isForeground = prefs.getBool('is_app_foreground') ?? false;
+    final status = isForeground ? 'online' : 'background';
+
     // Parallel upsert and insert for stability
     await Future.wait([
       supabase.from('latest_locations').upsert({
@@ -105,9 +109,9 @@ Future<void> _sendUpdate(ServiceInstance service, SupabaseClient supabase, Batte
         'accuracy': position.accuracy,
         'timestamp': DateTime.now().toUtc().toIso8601String(),
       }),
-      // Also refresh presence status
+      // Also refresh presence status based on actual app state
       supabase.from('profiles').update({
-        'status': 'online',
+        'status': status,
         'updated_at': DateTime.now().toUtc().toIso8601String(),
       }).eq('user_id', userId)
     ]);

@@ -681,6 +681,9 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
             Text(member.name, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
             Text(member.email, style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 13)),
 
+            const SizedBox(height: 12),
+            _buildStatusBadge(member.status, colorScheme),
+
             const SizedBox(height: 16),
             Container(
               padding: const EdgeInsets.all(14),
@@ -758,6 +761,54 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildStatusBadge(String status, ColorScheme colorScheme) {
+    String label;
+    Color color;
+    IconData icon;
+
+    switch (status) {
+      case 'online':
+        label = 'Đang trực tuyến';
+        color = Colors.green;
+        icon = Icons.flash_on;
+        break;
+      case 'idle':
+        label = 'Chế độ chờ (Nền)';
+        color = Colors.orange;
+        icon = Icons.hourglass_empty;
+        break;
+      case 'background':
+        label = 'Truy cập (Service)';
+        color = Colors.blue;
+        icon = Icons.track_changes;
+        break;
+      default:
+        label = 'Ngoại tuyến';
+        color = Colors.grey;
+        icon = Icons.power_settings_new;
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color.withOpacity(0.3)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: color),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.bold),
+          ),
+        ],
       ),
     );
   }
