@@ -781,15 +781,15 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         color = Colors.orange;
         icon = Icons.hourglass_empty;
         break;
-      case 'background':
-        label = 'Truy cập (Service)';
-        color = Colors.blue;
-        icon = Icons.track_changes;
-        break;
-      default:
+      case 'offline':
         label = 'Ngoại tuyến';
-        color = Colors.grey;
+        color = Colors.purple;
         icon = Icons.power_settings_new;
+        break;
+      default: // logged_out
+        label = 'Đã đăng xuất';
+        color = Colors.grey;
+        icon = Icons.logout;
     }
 
     return Container(
@@ -1101,10 +1101,10 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                                     decoration: BoxDecoration(
                                       shape: BoxShape.circle,
                                       border: Border.all(
-                                        color: member.status == 'online' 
-                                            ? Colors.green 
-                                            : member.status == 'idle' 
-                                                ? Colors.amber 
+                                        color: member.status == 'online'
+                                            ? Colors.green
+                                            : member.status == 'idle'
+                                                ? Colors.orange
                                                 : Colors.transparent,
                                         width: 2,
                                       ),
@@ -1151,14 +1151,14 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                                         Container(
                                           padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
                                           decoration: BoxDecoration(
-                                            color: (member.status == 'online' ? Colors.green : (member.status == 'idle' ? Colors.amber : Colors.grey)).withOpacity(0.12),
+                                            color: (member.status == 'online' ? Colors.green : (member.status == 'idle' ? Colors.orange : (member.status == 'offline' ? Colors.purple : Colors.grey))).withOpacity(0.12),
                                             borderRadius: BorderRadius.circular(4),
-                                            border: Border.all(color: (member.status == 'online' ? Colors.green : (member.status == 'idle' ? Colors.amber : Colors.grey)).withOpacity(0.3)),
+                                            border: Border.all(color: (member.status == 'online' ? Colors.green : (member.status == 'idle' ? Colors.orange : (member.status == 'offline' ? Colors.purple : Colors.grey))).withOpacity(0.3)),
                                           ),
                                           child: Text(
-                                            member.status == 'online' ? 'Online' : (member.status == 'idle' ? 'Vừa xong' : 'Offline'),
+                                            member.status == 'online' ? 'Online' : (member.status == 'idle' ? 'Vừa xong' : (member.status == 'offline' ? 'Ngoại tuyến' : 'Đã đăng xuất')),
                                             style: TextStyle(
-                                              color: member.status == 'online' ? Colors.green : (member.status == 'idle' ? Colors.amber[800] : Colors.grey[700]), 
+                                              color: member.status == 'online' ? Colors.green : (member.status == 'idle' ? Colors.orange[800] : (member.status == 'offline' ? Colors.purple[700] : Colors.grey[700])), 
                                               fontSize: 9, 
                                               fontWeight: FontWeight.bold
                                             ),

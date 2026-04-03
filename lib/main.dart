@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:developer';
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
@@ -105,7 +106,8 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
 
   /// Pass credentials to native Android layer so ProcessLifecycleOwner
   /// can send status updates even when the Dart VM is killed.
-  void _syncNativeCredentials(Session? session) {
+  /// Also persist refresh_token for background service session recovery.
+  void _syncNativeCredentials(Session? session) async {
     if (session == null) return;
     final userId = session.user.id;
     final accessToken = session.accessToken;
@@ -116,7 +118,20 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
       userId: userId,
       accessToken: accessToken,
     );
-    log('📱 [App] Native lifecycle credentials synced for: $userId');
+    
+    // Critical: save refresh_token so background service can recover auth
+    // when access_token expires (~1h). Without this, background tracking
+    // silently stops writing to DB after the token expires.
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('access_token', accessToken);
+    if (session.refreshToken != null) {
+      await prefs.setString('refresh_token', session.refreshToken!);
+    }
+    // Save full session JSON so background isolate can call recoverSession() correctly.
+    // recoverSession() expects the full JSON object, NOT just the raw token string.
+    await prefs.setString('session_json', jsonEncode(session.toJson()));
+
+    log('📱 [App] Native lifecycle credentials + tokens synced for: $userId');
   }
 
   @override
@@ -149,7 +164,7 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
         _updateStatus('idle'); // Background but not killed - Cam
         break;
       case AppLifecycleState.detached:
-        _updateStatus('background'); // App closed/killed - Tím
+        _updateStatus('offline'); // App closed/killed - Tím (DB constraint: only online/idle/offline/logged_out)
         try {
           Provider.of<AppProvider>(context, listen: false).stopForegroundTrackingOnly();
         } catch (_) {}

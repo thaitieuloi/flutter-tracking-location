@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
@@ -34,7 +35,9 @@ void onStart(ServiceInstance service) async {
   final supabaseUrl = prefs.getString('supabase_url');
   final supabaseKey = prefs.getString('supabase_anon_key');
   final userId = prefs.getString('current_user_id');
-  final accessToken = prefs.getString('access_token');
+  final sessionJson = prefs.getString('session_json');
+  final accessToken = prefs.getString('access_token');   // fallback
+  final refreshToken = prefs.getString('refresh_token'); // fallback
 
   if (supabaseUrl == null || supabaseKey == null || userId == null) {
     debugPrint('[BackgroundService] Missing essential credentials, stopping');
@@ -57,21 +60,52 @@ void onStart(ServiceInstance service) async {
       anonKey: supabaseKey,
     );
     
-    // Authenticate with access token if available
-    if (accessToken != null) {
-      // Use setSession to restore the authenticated state
-      await Supabase.instance.client.auth.setSession(accessToken);
-      debugPrint('[BackgroundService] Session recovered for $userId');
+    // Authenticate using full session JSON (recoverSession expects JSON, NOT raw token string).
+    // Fallback to access_token if session_json not yet saved (race condition on first launch).
+    if (sessionJson != null) {
+      try {
+        await Supabase.instance.client.auth.recoverSession(sessionJson);
+        debugPrint('[BackgroundService] Session recovered via session_json for $userId');
+      } catch (recoverErr) {
+        debugPrint('[BackgroundService] recoverSession failed: $recoverErr');
+        // Fallback: set access token directly (works until expiry ~1h)
+        if (accessToken != null) {
+          try {
+            await Supabase.instance.client.auth.setSession(accessToken);
+            debugPrint('[BackgroundService] Fallback setSession OK for $userId');
+          } catch (setErr) {
+            debugPrint('[BackgroundService] setSession also failed: $setErr');
+          }
+        }
+      }
+    } else if (accessToken != null) {
+      try {
+        await Supabase.instance.client.auth.setSession(accessToken);
+        debugPrint('[BackgroundService] Session set via access_token (no session_json yet) for $userId');
+      } catch (e) {
+        debugPrint('[BackgroundService] setSession failed: $e');
+      }
     }
   } catch (e) {
-    debugPrint('[BackgroundService] Supabase init error: $e');
+    debugPrint('[BackgroundService] Supabase init or auth recovery error: $e');
   }
 
   final supabase = Supabase.instance.client;
+  
+  // Final verification of auth state before starting
+  final session = supabase.auth.currentSession;
+  if (session == null) {
+    debugPrint('[BackgroundService] ⚠️ Critical: No session recovered for $userId. Tracking will likely fail.');
+  } else {
+    debugPrint('[BackgroundService] ✅ Auth verified. UID: ${supabase.auth.currentUser?.id}');
+  }
+
   final battery = Battery();
 
-  // Initial update
-  _sendUpdate(service, supabase, battery, userId);
+  // Initial update - wrap in delayed to ensure auth state is propagated internally
+  Future.delayed(const Duration(seconds: 2), () {
+    _sendUpdate(service, supabase, battery, userId);
+  });
 
   Timer.periodic(const Duration(seconds: 30), (timer) async {
     await _sendUpdate(service, supabase, battery, userId);
@@ -80,6 +114,39 @@ void onStart(ServiceInstance service) async {
 
 Future<void> _sendUpdate(ServiceInstance service, SupabaseClient supabase, Battery battery, String userId) async {
   try {
+    // Check auth state again before sending
+    var currentUser = supabase.auth.currentUser;
+    if (currentUser == null) {
+      // Race condition: main app may not have saved session_json yet at first launch.
+      // Re-read SharedPreferences and attempt recovery now.
+      debugPrint('[BackgroundService] ⚠️ No auth user, attempting late recovery for $userId');
+      try {
+        final freshPrefs = await SharedPreferences.getInstance();
+        final freshSessionJson = freshPrefs.getString('session_json');
+        final freshAccessToken = freshPrefs.getString('access_token');
+        if (freshSessionJson != null) {
+          await supabase.auth.recoverSession(freshSessionJson);
+        } else if (freshAccessToken != null) {
+          await supabase.auth.setSession(freshAccessToken);
+        }
+        currentUser = supabase.auth.currentUser;
+      } catch (e) {
+        debugPrint('[BackgroundService] Late recovery failed: $e');
+      }
+    }
+    if (currentUser == null) {
+      debugPrint('[BackgroundService] ❌ Abort update: No authenticated user. (Exp: $userId)');
+      return;
+    }
+
+    if (currentUser.id != userId) {
+      debugPrint('[BackgroundService] ⚠️ User ID mismatch: Auth=${currentUser.id} vs Prefs=$userId');
+      // Use the actual auth ID to avoid RLS violation
+    }
+    
+    final activeUserId = currentUser.id;
+    debugPrint('[BackgroundService] 🛰️ Sending update for UID: $activeUserId');
+
     final position = await Geolocator.getCurrentPosition(
       desiredAccuracy: LocationAccuracy.high,
       timeLimit: const Duration(seconds: 15),
@@ -90,12 +157,14 @@ Future<void> _sendUpdate(ServiceInstance service, SupabaseClient supabase, Batte
 
     final prefs = await SharedPreferences.getInstance();
     final isForeground = prefs.getBool('is_app_foreground') ?? false;
-    final status = isForeground ? 'online' : 'background';
+    // MUST use 'offline' instead of 'background' — DB has CHECK constraint:
+    // status IN ('online', 'idle', 'offline', 'logged_out')
+    final status = isForeground ? 'online' : 'offline';
 
     // Parallel upsert and insert for stability
     await Future.wait([
       supabase.from('latest_locations').upsert({
-        'user_id': userId,
+        'user_id': activeUserId,
         'latitude': position.latitude,
         'longitude': position.longitude,
         'accuracy': position.accuracy,
@@ -103,7 +172,7 @@ Future<void> _sendUpdate(ServiceInstance service, SupabaseClient supabase, Batte
         'updated_at': DateTime.now().toUtc().toIso8601String(),
       }, onConflict: 'user_id'),
       supabase.from('user_locations').insert({
-        'user_id': userId,
+        'user_id': activeUserId,
         'latitude': position.latitude,
         'longitude': position.longitude,
         'accuracy': position.accuracy,
@@ -113,8 +182,9 @@ Future<void> _sendUpdate(ServiceInstance service, SupabaseClient supabase, Batte
       supabase.from('profiles').update({
         'status': status,
         'updated_at': DateTime.now().toUtc().toIso8601String(),
-      }).eq('user_id', userId)
+      }).eq('user_id', activeUserId)
     ]);
+
 
     if (service is AndroidServiceInstance) {
       final now = DateTime.now();

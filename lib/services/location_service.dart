@@ -80,9 +80,9 @@ class LocationService {
     try {
       // 1. Try Nominatim (Primary - same as web)
       final url = Uri.parse(
-        'https://nominatim.openstreetmap.org/reverse?lat=$latitude&lon=$longitude&format=json&accept-language=vi&addressdetails=1&extratags=1',
+        'https://nominatim.openstreetmap.org/reverse?lat=$latitude&lon=$longitude&format=json&accept-language=vi&addressdetails=1&extratags=1&namedetails=1&zoom=18',
       );
-      
+
       final response = await http.get(
         url,
         headers: { 'User-Agent': 'FamilyTracker/1.0 (family-tracker-app)' },
@@ -91,34 +91,44 @@ class LocationService {
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         final addr = data['address'] ?? {};
-        
+
         final parts = <String>[];
-        
-        // 1. Specific point (House number or Place name / POI)
+
+        // 1. Specific point — priority: house number > POI name > named OSM feature (landmark)
         final extratags = data['extratags'] ?? {};
         final houseNum = addr['house_number'] ?? extratags['addr:housenumber'] ?? addr['building'];
         final poiName = addr['amenity'] ?? addr['shop'] ?? addr['office'] ?? addr['tourism'] ?? addr['leisure'] ?? addr['industrial'];
-        
-        final point = (houseNum != null && poiName != null) 
-          ? '$houseNum, $poiName' 
-          : (houseNum ?? poiName);
+        // data['name'] is the matched OSM object name (e.g. "Trường THPT Hóc Môn")
+        final osmName = data['name'] as String?;
+        final effectiveOsmName = (osmName != null && osmName.isNotEmpty && osmName != addr['road']) ? osmName : null;
+
+        String? point;
+        if (houseNum != null && poiName != null) {
+          point = '$houseNum, $poiName';
+        } else if (houseNum != null) {
+          point = houseNum as String;
+        } else if (poiName != null) {
+          point = poiName as String;
+        } else if (effectiveOsmName != null) {
+          point = 'Gần $effectiveOsmName';
+        }
         if (point != null) parts.add(point);
 
         // 2. Road
-        if (addr['road'] != null) parts.add(addr['road']);
+        if (addr['road'] != null) parts.add(addr['road'] as String);
 
         // 3. Area (Suburb, Ward, etc.)
         final area = addr['suburb'] ?? addr['quarter'] ?? addr['neighbourhood'] ?? addr['hamlet'] ?? addr['village'];
-        if (area != null) parts.add(area);
+        if (area != null) parts.add(area as String);
 
         // 4. District/Town
         final district = addr['city_district'] ?? addr['town'] ?? addr['district'];
-        if (district != null) parts.add(district);
+        if (district != null) parts.add(district as String);
 
         if (parts.isNotEmpty) {
           return parts.join(', ');
         }
-        
+
         // Fallback to display_name formatting
         final displayName = data['display_name'] as String?;
         if (displayName != null && displayName.isNotEmpty) {

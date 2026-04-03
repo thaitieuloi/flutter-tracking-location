@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -156,10 +157,18 @@ class AppProvider extends ChangeNotifier {
       await prefs.setString('supabase_anon_key', SupabaseConfig.anonKey);
       await prefs.setString('current_user_id', _currentUser!.id);
       
-      // Save access token for background isolate authentication
+      // Save BOTH tokens for background isolate authentication
+      // refresh_token is critical: access_token expires after ~1h,
+      // without refresh_token the background service loses auth silently.
       final session = Supabase.instance.client.auth.currentSession;
       if (session != null) {
         await prefs.setString('access_token', session.accessToken);
+        if (session.refreshToken != null) {
+          await prefs.setString('refresh_token', session.refreshToken!);
+        }
+        // Full session JSON for recoverSession() in background isolate
+        await prefs.setString('session_json', jsonEncode(session.toJson()));
+        _svc.log('🔑 [App] Session JSON + tokens saved for background service');
       }
       
       startLocationSharing();
