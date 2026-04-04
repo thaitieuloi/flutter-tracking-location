@@ -459,9 +459,9 @@ class SupabaseService {
 
   // ── Location ─────────────────────────────────────────────
 
-  Future<void> updateUserLocation(UserLocation location, {String status = 'online'}) async {
+  Future<void> updateUserLocation(UserLocation location) async {
     try {
-      log('📍 [DB] updateUserLocation: ${location.userId} lat=${location.latitude} lng=${location.longitude} status=$status');
+      log('📍 [DB] updateUserLocation: ${location.userId} lat=${location.latitude} lng=${location.longitude}');
 
       // Insert into user_locations (history)
       await _client.from(_tUserLocations).insert({
@@ -488,16 +488,11 @@ class SupabaseService {
           .update({'last_seen': location.timestamp.toIso8601String()})
           .eq('id', location.userId);
 
-      // Update presence on profiles table with the provided status
-      await _client
-          .from('profiles')
-          .update({
-            'status': status,
-            'updated_at': DateTime.now().toUtc().toIso8601String()
-          })
-          .eq('user_id', location.userId);
+      // NOTE: profiles.status is NOT updated here.
+      // Status is managed exclusively by lifecycle events (main.dart)
+      // so that profiles.updated_at accurately reflects status change time.
 
-      log('✅ [DB] Location saved and presence refreshed as $status');
+      log('✅ [DB] Location saved');
     } catch (e) {
       log('❌ [DB] updateUserLocation error: $e');
     }
@@ -884,9 +879,10 @@ class SupabaseService {
       photoUrl: data['photo_url'],
       familyId: data['family_id'] ?? '',
       isLocationSharing: data['is_location_sharing'] ?? false,
-      lastSeen: _getLatestTimestamp(data['last_seen'], data['profile_updated_at']),
+      lastSeen: data['last_seen'] != null ? DateTime.tryParse(data['last_seen'].toString()) : null,
       status: data['status'] ?? 'offline',
       role: data['role'] ?? 'member',
+      profileUpdatedAt: data['profile_updated_at'] != null ? DateTime.tryParse(data['profile_updated_at'].toString()) : null,
     );
   }
 

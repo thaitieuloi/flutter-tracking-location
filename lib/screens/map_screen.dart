@@ -638,7 +638,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   void _showMemberDetails(FamilyMember member, UserLocation loc) {
     final colorScheme = Theme.of(context).colorScheme;
     final isCurrentUser = member.id == Provider.of<AppProvider>(context, listen: false).currentUser?.id;
-    final ago = _timeAgo(_getFreshestTimestamp(member, loc));
+    final ago = loc != null ? _timeAgo(loc.timestamp) : 'Chưa xác định';
 
     showModalBottomSheet(
       context: context,
@@ -682,7 +682,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
             Text(member.email, style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 13)),
 
             const SizedBox(height: 12),
-            _buildStatusBadge(member.status, colorScheme),
+            _buildStatusBadge(member, colorScheme),
 
             const SizedBox(height: 16),
             Container(
@@ -765,19 +765,23 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     );
   }
 
-  Widget _buildStatusBadge(String status, ColorScheme colorScheme) {
+  Widget _buildStatusBadge(FamilyMember member, ColorScheme colorScheme) {
     String label;
     Color color;
     IconData icon;
 
-    switch (status) {
+    final statusTimeLabel = member.profileUpdatedAt != null 
+        ? _timeAgo(member.profileUpdatedAt!) 
+        : 'Gần đây';
+
+    switch (member.status) {
       case 'online':
-        label = 'Đang trực tuyến';
+        label = 'Trực tuyến';
         color = Colors.green;
         icon = Icons.flash_on;
         break;
       case 'idle':
-        label = 'Chế độ chờ (Nền)';
+        label = statusTimeLabel;
         color = Colors.orange;
         icon = Icons.hourglass_empty;
         break;
@@ -1137,17 +1141,15 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
+                                    Text(
+                                      member.name,
+                                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                    const SizedBox(height: 4),
                                     Row(
                                       children: [
-                                        Flexible(
-                                          child: Text(
-                                            member.name,
-                                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                          ),
-                                        ),
-                                        const SizedBox(width: 6),
                                         Container(
                                           padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
                                           decoration: BoxDecoration(
@@ -1156,7 +1158,13 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                                             border: Border.all(color: (member.status == 'online' ? Colors.green : (member.status == 'idle' ? Colors.orange : (member.status == 'offline' ? Colors.purple : Colors.grey))).withOpacity(0.3)),
                                           ),
                                           child: Text(
-                                            member.status == 'online' ? 'Online' : (member.status == 'idle' ? 'Vừa xong' : (member.status == 'offline' ? 'Ngoại tuyến' : 'Đã đăng xuất')),
+                                            member.status == 'online' 
+                                                ? 'Đang online' 
+                                                : (member.status == 'logged_out' 
+                                                    ? 'Thoát hệ thống' 
+                                                    : (member.status == 'offline'
+                                                        ? 'Ngoại tuyến'
+                                                        : (member.profileUpdatedAt != null ? _timeAgo(member.profileUpdatedAt!) : 'Vừa xong'))),
                                             style: TextStyle(
                                               color: member.status == 'online' ? Colors.green : (member.status == 'idle' ? Colors.orange[800] : (member.status == 'offline' ? Colors.purple[700] : Colors.grey[700])), 
                                               fontSize: 9, 
@@ -1164,9 +1172,17 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                                             ),
                                           ),
                                         ),
+                                        const Padding(
+                                          padding: EdgeInsets.symmetric(horizontal: 4),
+                                          child: Text('•', style: TextStyle(color: Colors.black26, fontSize: 10)),
+                                        ),
+                                        Text(
+                                          '🕒 ${loc != null ? _timeAgo(loc.timestamp) : 'Chưa xác định'}',
+                                          style: const TextStyle(fontSize: 10, color: Colors.black45, fontWeight: FontWeight.w500),
+                                        ),
                                       ],
                                     ),
-                                    const SizedBox(height: 2),
+                                    const SizedBox(height: 4),
                                     Text(
                                       provider.getDisplayAddress(loc),
                                       maxLines: 1,
@@ -1175,10 +1191,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                                         fontSize: 12,
                                         color: member.isLocationSharing ? Colors.black54 : Colors.grey,
                                       ),
-                                    ),
-                                    Text(
-                                      '🕒 ${_timeAgo(_getFreshestTimestamp(member, loc))}',
-                                      style: const TextStyle(fontSize: 10, color: Colors.black26),
                                     ),
                                   ],
                                 ),

@@ -91,7 +91,7 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
         _updateStatus('online', setToken: true);
         _syncNativeCredentials(data.session);
       } else if (data.event == AuthChangeEvent.signedOut) {
-        _updateStatus('offline');
+        // supabase_service.signOut() already sets 'logged_out' in DB
         NativeLifecycleService.clearCredentials();
       }
     });

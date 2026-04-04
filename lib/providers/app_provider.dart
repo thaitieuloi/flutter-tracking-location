@@ -249,9 +249,7 @@ class AppProvider extends ChangeNotifier {
 
   Future<void> signOut() async {
     _svc.log('🔐 [App] signOut');
-    if (_currentUser != null) {
-      await _svc.updateUserStatus(_currentUser!.id, 'offline');
-    }
+    // Don't set 'offline' here — supabase_service.signOut() sets 'logged_out' correctly
     stopLocationSharing();
     await _cleanupSubscriptions();
     await _svc.signOut();
@@ -284,12 +282,8 @@ class AppProvider extends ChangeNotifier {
 
     _locationSvc.startTracking((location) async {
       _svc.log('📍 [Tracking] New position: ${location.latitude}, ${location.longitude}');
-      
-      final prefs = await SharedPreferences.getInstance();
-      final isForeground = prefs.getBool('is_app_foreground') ?? true;
-      final status = isForeground ? 'online' : 'idle';
-      
-      _svc.updateUserLocation(location, status: status);
+      // Status is managed by lifecycle events in main.dart, not here
+      _svc.updateUserLocation(location);
       _memberLocations[_currentUser!.id] = location;
       notifyListeners();
     }, _currentUser!.id, periodicSeconds: 30);

@@ -155,13 +155,7 @@ Future<void> _sendUpdate(ServiceInstance service, SupabaseClient supabase, Batte
 
     final batteryLevel = await battery.batteryLevel;
 
-    final prefs = await SharedPreferences.getInstance();
-    final isForeground = prefs.getBool('is_app_foreground') ?? false;
-    // MUST use 'offline' instead of 'background' — DB has CHECK constraint:
-    // status IN ('online', 'idle', 'offline', 'logged_out')
-    final status = isForeground ? 'online' : 'offline';
-
-    // Parallel upsert and insert for stability
+    // Only update location data — status is managed by lifecycle events in main.dart
     await Future.wait([
       supabase.from('latest_locations').upsert({
         'user_id': activeUserId,
@@ -178,11 +172,6 @@ Future<void> _sendUpdate(ServiceInstance service, SupabaseClient supabase, Batte
         'accuracy': position.accuracy,
         'timestamp': DateTime.now().toUtc().toIso8601String(),
       }),
-      // Also refresh presence status based on actual app state
-      supabase.from('profiles').update({
-        'status': status,
-        'updated_at': DateTime.now().toUtc().toIso8601String(),
-      }).eq('user_id', activeUserId)
     ]);
 
 
