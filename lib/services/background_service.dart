@@ -155,7 +155,8 @@ Future<void> _sendUpdate(ServiceInstance service, SupabaseClient supabase, Batte
 
     final batteryLevel = await battery.batteryLevel;
 
-    // Only update location data — status is managed by lifecycle events in main.dart
+    // Only update location data — status is managed exclusively by lifecycle events
+    // (Dart: main.dart, Native: FamilyTrackerApp.kt / LifecycleService.kt).
     await Future.wait([
       supabase.from('latest_locations').upsert({
         'user_id': activeUserId,

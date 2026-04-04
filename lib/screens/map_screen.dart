@@ -786,7 +786,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         icon = Icons.hourglass_empty;
         break;
       case 'offline':
-        label = 'Ngoại tuyến';
+        label = statusTimeLabel;
         color = Colors.purple;
         icon = Icons.power_settings_new;
         break;

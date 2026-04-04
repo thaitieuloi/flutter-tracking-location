@@ -896,10 +896,8 @@ class SupabaseService {
   Future<void> updateUserStatus(String userId, String status) async {
     try {
       log('🔄 [DB] updateUserStatus: $userId -> $status');
-      final now = DateTime.now().toUtc().toIso8601String();
       await _client.from('profiles').update({
         'status': status,
-        'updated_at': now,
       }).eq('user_id', userId);
     } catch (e) {
       log('❌ [DB] updateUserStatus error: $e');

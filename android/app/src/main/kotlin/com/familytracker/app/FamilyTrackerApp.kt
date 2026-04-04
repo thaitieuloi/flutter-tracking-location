@@ -91,7 +91,6 @@ class FamilyTrackerApp : Application() {
         // Run on a background thread but block until complete (sync-ish)
         Thread {
             try {
-                val now = java.time.Instant.now().toString()
                 val url = URL("$supabaseUrl/rest/v1/profiles?user_id=eq.$userId")
                 val conn = url.openConnection() as HttpURLConnection
 
@@ -104,7 +103,7 @@ class FamilyTrackerApp : Application() {
                 conn.readTimeout = 3000
                 conn.doOutput = true
 
-                val body = """{"status":"$status","updated_at":"$now"}"""
+                val body = """{"status":"$status"}"""
                 conn.outputStream.use { it.write(body.toByteArray()) }
 
                 val responseCode = conn.responseCode
