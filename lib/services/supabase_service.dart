@@ -93,7 +93,6 @@ class SupabaseService {
         await _client.from('profiles').update({
           'status': 'logged_out',
           'push_token': null,
-          'updated_at': DateTime.now().toUtc().toIso8601String(),
         }).eq('user_id', userId);
         log('✅ [Auth] Profile updated successfully');
       } catch (e) {
@@ -378,8 +377,7 @@ class SupabaseService {
           if (profile['display_name'] != null && profile['display_name'].toString().isNotEmpty) {
             combined['name'] = profile['display_name'];
           }
-          // Use profile updated_at as a fallback for last_seen if it's fresher
-          combined['profile_updated_at'] = profile['updated_at'];
+          combined['profile_updated_at'] = profile['status_updated_at'];
         }
         
         final userId = row['id'].toString();
@@ -489,8 +487,8 @@ class SupabaseService {
           .eq('id', location.userId);
 
       // NOTE: profiles.status is NOT updated here.
-      // Status is managed exclusively by lifecycle events (main.dart)
-      // so that profiles.updated_at accurately reflects status change time.
+      // Status is managed exclusively by lifecycle events (main.dart).
+      // profiles.status_updated_at is maintained automatically by a DB trigger.
 
       log('✅ [DB] Location saved');
     } catch (e) {

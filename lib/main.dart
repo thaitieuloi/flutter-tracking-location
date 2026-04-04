@@ -191,7 +191,6 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
       
       final Map<String, dynamic> data = {
         'status': status,
-        'updated_at': DateTime.now().toUtc().toIso8601String(),
       };
       if (setToken) {
         data['push_token'] = 'active_session_flutter';
