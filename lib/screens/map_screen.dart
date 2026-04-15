@@ -766,51 +766,81 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   }
 
   Widget _buildStatusBadge(FamilyMember member, ColorScheme colorScheme) {
-    String label;
+    // Chuẩn hóa: label cố định theo status, timeAgo từ profileUpdatedAt (Two-line rule)
+    String statusLabel;
+    String timeLabel;
     Color color;
     IconData icon;
+    bool showTime;
 
-    final statusTimeLabel = member.profileUpdatedAt != null 
-        ? _timeAgo(member.profileUpdatedAt!) 
-        : 'Gần đây';
+    final timeAgo = member.profileUpdatedAt != null
+        ? _timeAgo(member.profileUpdatedAt!)
+        : null;
 
     switch (member.status) {
       case 'online':
-        label = 'Trực tuyến';
+        statusLabel = 'Đang online';
         color = Colors.green;
-        icon = Icons.flash_on;
+        icon = Icons.circle;
+        showTime = false; // đang online thì không cần time
         break;
       case 'idle':
-        label = statusTimeLabel;
+        statusLabel = 'Vừa mới truy cập';
         color = Colors.orange;
-        icon = Icons.hourglass_empty;
+        icon = Icons.timelapse;
+        showTime = true;
         break;
       case 'offline':
-        label = statusTimeLabel;
+        statusLabel = 'Ngoại tuyến';
         color = Colors.purple;
         icon = Icons.power_settings_new;
+        showTime = true;
         break;
       default: // logged_out
-        label = 'Đã đăng xuất';
+        statusLabel = 'Thoát hệ thống';
         color = Colors.grey;
         icon = Icons.logout;
+        showTime = false;
     }
+    timeLabel = (showTime && timeAgo != null) ? timeAgo : '';
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: color.withOpacity(0.3)),
+        color: color.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: color.withOpacity(0.25)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 14, color: color),
-          const SizedBox(width: 6),
-          Text(
-            label,
-            style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.bold),
+          Icon(icon, size: 10, color: color),
+          const SizedBox(width: 8),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                statusLabel,
+                style: TextStyle(
+                  color: color,
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 0.2,
+                ),
+              ),
+              if (timeLabel.isNotEmpty) ...[
+                const SizedBox(height: 2),
+                Text(
+                  timeLabel,
+                  style: TextStyle(
+                    color: color.withOpacity(0.7),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ],
           ),
         ],
       ),
@@ -1043,17 +1073,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                                   ],
                                 ),
                               ),
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                decoration: BoxDecoration(
-                                  color: Colors.green.withOpacity(0.1),
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: const Text(
-                                  'Đang online',
-                                  style: TextStyle(color: Colors.green, fontSize: 10, fontWeight: FontWeight.bold),
-                                ),
-                              ),
+                              _buildMiniStatusBadge(provider.currentUser!.status, provider.currentUser!.profileUpdatedAt),
                             ],
                           ),
                         ),
@@ -1148,40 +1168,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                                       overflow: TextOverflow.ellipsis,
                                     ),
                                     const SizedBox(height: 4),
-                                    Row(
-                                      children: [
-                                        Container(
-                                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                                          decoration: BoxDecoration(
-                                            color: (member.status == 'online' ? Colors.green : (member.status == 'idle' ? Colors.orange : (member.status == 'offline' ? Colors.purple : Colors.grey))).withOpacity(0.12),
-                                            borderRadius: BorderRadius.circular(4),
-                                            border: Border.all(color: (member.status == 'online' ? Colors.green : (member.status == 'idle' ? Colors.orange : (member.status == 'offline' ? Colors.purple : Colors.grey))).withOpacity(0.3)),
-                                          ),
-                                          child: Text(
-                                            member.status == 'online' 
-                                                ? 'Đang online' 
-                                                : (member.status == 'logged_out' 
-                                                    ? 'Thoát hệ thống' 
-                                                    : (member.status == 'offline'
-                                                        ? 'Ngoại tuyến'
-                                                        : (member.profileUpdatedAt != null ? _timeAgo(member.profileUpdatedAt!) : 'Vừa xong'))),
-                                            style: TextStyle(
-                                              color: member.status == 'online' ? Colors.green : (member.status == 'idle' ? Colors.orange[800] : (member.status == 'offline' ? Colors.purple[700] : Colors.grey[700])), 
-                                              fontSize: 9, 
-                                              fontWeight: FontWeight.bold
-                                            ),
-                                          ),
-                                        ),
-                                        const Padding(
-                                          padding: EdgeInsets.symmetric(horizontal: 4),
-                                          child: Text('•', style: TextStyle(color: Colors.black26, fontSize: 10)),
-                                        ),
-                                        Text(
-                                          '🕒 ${loc != null ? _timeAgo(loc.timestamp) : 'Chưa xác định'}',
-                                          style: const TextStyle(fontSize: 10, color: Colors.black45, fontWeight: FontWeight.w500),
-                                        ),
-                                      ],
-                                    ),
+                                    // Two-line rule: line 1 = status label, line 2 = time ago
+                                    _buildMemberStatusRow(member),
                                     const SizedBox(height: 4),
                                     Text(
                                       provider.getDisplayAddress(loc),
@@ -1277,6 +1265,108 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   }
 
   // ── Helpers ──────────────────────────────────────────────
+
+  /// Mini badge dùng trong current-user card và member list
+  Widget _buildMiniStatusBadge(String status, DateTime? updatedAt) {
+    Color color;
+    String label;
+    switch (status) {
+      case 'online':
+        color = Colors.green;
+        label = 'Đang online';
+        break;
+      case 'idle':
+        color = Colors.orange;
+        label = 'Vừa mới truy cập';
+        break;
+      case 'offline':
+        color = Colors.purple;
+        label = 'Ngoại tuyến';
+        break;
+      default:
+        color = Colors.grey;
+        label = 'Thoát hệ thống';
+    }
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.bold),
+      ),
+    );
+  }
+
+  /// Two-line status row: line 1 = cố định label, line 2 = time ago
+  Widget _buildMemberStatusRow(FamilyMember member) {
+    Color color;
+    String label;
+    bool showTime;
+    switch (member.status) {
+      case 'online':
+        color = Colors.green;
+        label = 'Đang online';
+        showTime = false;
+        break;
+      case 'idle':
+        color = Colors.orange;
+        label = 'Vừa mới truy cập';
+        showTime = true;
+        break;
+      case 'offline':
+        color = Colors.purple;
+        label = 'Ngoại tuyến';
+        showTime = true;
+        break;
+      default:
+        color = Colors.grey;
+        label = 'Thoát hệ thống';
+        showTime = false;
+    }
+    final timeStr = (showTime && member.profileUpdatedAt != null)
+        ? _timeAgo(member.profileUpdatedAt!)
+        : null;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Container(
+              width: 6,
+              height: 6,
+              decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+            ),
+            const SizedBox(width: 4),
+            Text(
+              label,
+              style: TextStyle(
+                color: color,
+                fontSize: 10,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+        if (timeStr != null) ...[
+          const SizedBox(height: 1),
+          Row(
+            children: [
+              const Icon(Icons.access_time, size: 9, color: Colors.black38),
+              const SizedBox(width: 3),
+              Text(
+                timeStr,
+                style: const TextStyle(fontSize: 9, color: Colors.black45, fontWeight: FontWeight.w500),
+              ),
+            ],
+          ),
+        ],
+      ],
+    );
+  }
 
   Widget _buildSmallActionButton({
     required IconData icon,

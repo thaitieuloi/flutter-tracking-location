@@ -78,68 +78,184 @@ class LocationService {
     double longitude,
   ) async {
     try {
-      // 1. Try Nominatim (Primary - same as web)
+      // 1. Google Maps Geocoding API (Primary)
+      const apiKey = 'AIzaSyD0e8DR3xuSiyAsjYcYTLIJahx-uEp13cU';
       final url = Uri.parse(
-        'https://nominatim.openstreetmap.org/reverse?lat=$latitude&lon=$longitude&format=json&accept-language=vi&addressdetails=1&extratags=1&namedetails=1&zoom=18',
+        'https://maps.googleapis.com/maps/api/geocode/json?latlng=$latitude,$longitude&key=$apiKey&language=vi',
+      );
+
+      final response = await http.get(url).timeout(const Duration(seconds: 4));
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['status'] == 'OK' && data['results'] != null && data['results'].isNotEmpty) {
+          final results = data['results'] as List;
+
+          // Prefer result that has street_number; fall back to results[0]
+          final resultObj = results.firstWhere(
+            (r) => (r['address_components'] as List).any(
+              (c) => (c['types'] as List).contains('street_number'),
+            ),
+            orElse: () => results[0],
+          );
+
+          // Flatten all components from all results for fallback field extraction
+          final allComponents = results
+              .expand<dynamic>((r) => r['address_components'] as List)
+              .toList();
+
+          String? houseNumber;
+          String? road;
+          String? area;
+          String? district;
+          String? city;
+          String? poiName;
+
+          for (var comp in resultObj['address_components'] as List) {
+            final types = comp['types'] as List;
+            final longName = comp['long_name'] as String;
+
+            if (types.contains('street_number')) houseNumber = longName;
+            if (types.contains('route')) road = longName;
+            if (types.contains('sublocality_level_1') || types.contains('sublocality')) area = longName;
+            if (types.contains('locality') || types.contains('administrative_area_level_2')) district = longName;
+            if (types.contains('administrative_area_level_1')) city = longName;
+            if (types.contains('point_of_interest') || types.contains('establishment')) {
+              if (poiName == null && longName != road) poiName = longName;
+            }
+          }
+
+          // Fill missing fields by scanning across all results
+          if (houseNumber == null) {
+            for (var comp in allComponents) {
+              if ((comp['types'] as List).contains('street_number')) {
+                houseNumber = comp['long_name'] as String;
+                break;
+              }
+            }
+          }
+          if (road == null) {
+            for (var comp in allComponents) {
+              if ((comp['types'] as List).contains('route')) {
+                road = comp['long_name'] as String;
+                break;
+              }
+            }
+          }
+          if (area == null) {
+            for (var comp in allComponents) {
+              final t = comp['types'] as List;
+              if (t.contains('sublocality_level_1') || t.contains('sublocality')) {
+                area = comp['long_name'] as String;
+                break;
+              }
+            }
+          }
+          if (district == null) {
+            for (var comp in allComponents) {
+              final t = comp['types'] as List;
+              if (t.contains('locality') || t.contains('administrative_area_level_2')) {
+                district = comp['long_name'] as String;
+                break;
+              }
+            }
+          }
+          if (city == null) {
+            for (var comp in allComponents) {
+              if ((comp['types'] as List).contains('administrative_area_level_1')) {
+                city = comp['long_name'] as String;
+                break;
+              }
+            }
+          }
+
+          final parts = <String>[];
+
+          if (houseNumber != null && road != null) {
+            parts.add('$houseNumber $road');
+          } else if (houseNumber != null) {
+            parts.add(houseNumber);
+            if (road != null) parts.add(road);
+          } else if (poiName != null) {
+            parts.add(poiName);
+            if (road != null) parts.add(road);
+          } else if (road != null) {
+            parts.add(road);
+          }
+
+          if (area != null && area != road) parts.add(area);
+          if (district != null && district != area) parts.add(district);
+          if (city != null && city != district && city != area) parts.add(city);
+
+          if (parts.isNotEmpty) {
+            return parts.join(', ');
+          }
+
+          final formattedAddress = resultObj['formatted_address'] as String?;
+          if (formattedAddress != null) {
+            return formattedAddress.split(',').take(3).join(',').trim();
+          }
+        }
+      }
+    } catch (e) {
+      print('LocationService: Google Maps Geocoding error: $e');
+    }
+
+    // 2. Fallback to Nominatim (Secondary)
+    try {
+      final url = Uri.parse(
+        'https://nominatim.openstreetmap.org/reverse?lat=$latitude&lon=$longitude&format=json&accept-language=vi&addressdetails=1&extratags=1&namedetails=1&zoom=19',
       );
 
       final response = await http.get(
         url,
-        headers: { 'User-Agent': 'FamilyTracker/1.0 (family-tracker-app)' },
-      ).timeout(const Duration(seconds: 4));
+        headers: {'User-Agent': 'FamilyTracker/2.0 (family-tracker-app)'},
+      ).timeout(const Duration(seconds: 6));
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         final addr = data['address'] ?? {};
+        final extratags = data['extratags'] ?? {};
+        final namedetails = data['namedetails'] ?? {};
+
+        final houseNumber = addr['house_number']
+            ?? extratags['addr:housenumber']
+            ?? namedetails['addr:housenumber']
+            ?? addr['building'];
+        final road = addr['road'] ?? addr['pedestrian'] ?? addr['path'];
+        final area = addr['suburb'] ?? addr['quarter'] ?? addr['neighbourhood']
+            ?? addr['hamlet'] ?? addr['village'] ?? addr['town'];
+        final district = addr['city_district'] ?? addr['county'] ?? addr['district'];
+        final city = addr['city'] ?? addr['state'];
 
         final parts = <String>[];
-
-        // 1. Specific point — priority: house number > POI name > named OSM feature (landmark)
-        final extratags = data['extratags'] ?? {};
-        final houseNum = addr['house_number'] ?? extratags['addr:housenumber'] ?? addr['building'];
-        final poiName = addr['amenity'] ?? addr['shop'] ?? addr['office'] ?? addr['tourism'] ?? addr['leisure'] ?? addr['industrial'];
-        // data['name'] is the matched OSM object name (e.g. "Trường THPT Hóc Môn")
-        final osmName = data['name'] as String?;
-        final effectiveOsmName = (osmName != null && osmName.isNotEmpty && osmName != addr['road']) ? osmName : null;
-
-        String? point;
-        if (houseNum != null && poiName != null) {
-          point = '$houseNum, $poiName';
-        } else if (houseNum != null) {
-          point = houseNum as String;
-        } else if (poiName != null) {
-          point = poiName as String;
-        } else if (effectiveOsmName != null) {
-          point = 'Gần $effectiveOsmName';
+        if (houseNumber != null && road != null) {
+          parts.add('$houseNumber $road');
+        } else if (houseNumber != null) {
+          parts.add(houseNumber as String);
+          if (road != null) parts.add(road as String);
+        } else if (road != null) {
+          parts.add(road as String);
         }
-        if (point != null) parts.add(point);
 
-        // 2. Road
-        if (addr['road'] != null) parts.add(addr['road'] as String);
-
-        // 3. Area (Suburb, Ward, etc.)
-        final area = addr['suburb'] ?? addr['quarter'] ?? addr['neighbourhood'] ?? addr['hamlet'] ?? addr['village'];
-        if (area != null) parts.add(area as String);
-
-        // 4. District/Town
-        final district = addr['city_district'] ?? addr['town'] ?? addr['district'];
-        if (district != null) parts.add(district as String);
+        if (area != null && area != road) parts.add(area as String);
+        if (district != null && district != area) parts.add(district as String);
+        if (city != null && city != district && city != area) parts.add(city as String);
 
         if (parts.isNotEmpty) {
           return parts.join(', ');
         }
 
-        // Fallback to display_name formatting
         final displayName = data['display_name'] as String?;
         if (displayName != null && displayName.isNotEmpty) {
-          return displayName.split(',').take(2).join(',').trim();
+          return displayName.split(',').take(3).join(',').trim();
         }
       }
     } catch (e) {
-      print('LocationService: Nominatim error: $e');
+      print('LocationService: Nominatim fallback error: $e');
     }
 
-    // 2. Fallback to native geocoding (Secondary)
+    // 3. Fallback to native geocoding (Tertiary)
     try {
       List<Placemark> placemarks = await placemarkFromCoordinates(
         latitude,

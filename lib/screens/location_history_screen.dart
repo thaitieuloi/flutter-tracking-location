@@ -661,14 +661,47 @@ class _LocationHistoryScreenState extends State<LocationHistoryScreen> with Tick
   // ── Daily Timeline ─────────────────────────────────────────
 
   Widget _buildDailyTimeline(ColorScheme colorScheme) {
+    // Calculate summary stats for the day
+    int tripCount = _trips.where((t) => t.type == TripType.trip).length;
+    double totalDist = _trips
+        .where((t) => t.type == TripType.trip)
+        .fold(0.0, (sum, t) => sum + t.distanceMeters / 1000);
+
     return Column(
       children: [
         _buildDateHeader(),
+        // Day summary strip
+        if (_trips.isNotEmpty)
+          Container(
+            margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [Color(0xFF1565C0), Color(0xFF2196F3)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              children: [
+                _buildDayStat('$tripCount', 'chế́n', Icons.route),
+                Container(width: 1, height: 28, color: Colors.white24),
+                _buildDayStat(
+                  totalDist >= 1 ? '${totalDist.toStringAsFixed(1)} km' : '${(totalDist * 1000).round()} m',
+                  'quãng đường', Icons.straighten,
+                ),
+                Container(width: 1, height: 28, color: Colors.white24),
+                _buildDayStat('${_trips.length}', 'điểm dừng', Icons.location_on),
+              ],
+            ),
+          ),
         Expanded(
           child: _trips.isEmpty
               ? _buildEmptyTimeline(colorScheme)
               : ListView.builder(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
                   itemCount: _trips.length,
                   itemBuilder: (context, index) {
                     final trip = _trips[index];
@@ -680,6 +713,26 @@ class _LocationHistoryScreenState extends State<LocationHistoryScreen> with Tick
                   },
                 ),
         ),
+      ],
+    );
+  }
+
+  Widget _buildDayStat(String value, String label, IconData icon) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 11, color: Colors.white60),
+            const SizedBox(width: 4),
+            Text(value,
+                style: const TextStyle(
+                    color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)),
+          ],
+        ),
+        const SizedBox(height: 2),
+        Text(label, style: const TextStyle(color: Colors.white60, fontSize: 9)),
       ],
     );
   }
@@ -720,42 +773,89 @@ class _LocationHistoryScreenState extends State<LocationHistoryScreen> with Tick
 
   Widget _buildStayCard(Trip stayTrip) {
     final duration = stayTrip.durationMinutes;
+    final startTime = DateFormat('HH:mm').format(stayTrip.startTime);
+    final endTime = DateFormat('HH:mm').format(stayTrip.endTime);
+    final addr = _getDisplayAddress(stayTrip.points.first);
+    final emoji = _getPlaceEmoji(addr);
+    final durationStr = duration >= 60
+        ? '${(duration / 60).floor()}h ${duration % 60}p'
+        : '$duration p';
+    final isLongStay = duration >= 60;
 
     return Container(
-      margin: const EdgeInsets.symmetric(vertical: 8),
-      padding: const EdgeInsets.all(16),
+      margin: const EdgeInsets.symmetric(vertical: 6),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(20),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 10)],
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(color: const Color(0xFFF0F2F5), borderRadius: BorderRadius.circular(10)),
-            child: const Icon(Icons.location_on, color: Colors.black54, size: 24),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Dừng tại đây: ${duration > 60 ? "${(duration/60).floor()}h ${duration%60}m" : "$duration m"}',
-                  style: const TextStyle(color: Colors.black26, fontSize: 13),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  _getDisplayAddress(stayTrip.points.first),
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.black87),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
-            ),
-          ),
+        boxShadow: [
+          BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 12, offset: const Offset(0, 3))
         ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Category emoji icon
+            Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFF8E1),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Center(child: Text(emoji, style: const TextStyle(fontSize: 22))),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Time row
+                  Row(
+                    children: [
+                      Text('$startTime – $endTime',
+                          style: const TextStyle(color: Colors.black38, fontSize: 11, fontWeight: FontWeight.w500)),
+                      const Spacer(),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: isLongStay
+                              ? const Color(0xFFFFF3E0)
+                              : const Color(0xFFF5F5F5),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.timer_outlined,
+                                size: 10,
+                                color: isLongStay ? Colors.orange[700] : Colors.black38),
+                            const SizedBox(width: 3),
+                            Text(durationStr,
+                                style: TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                    color: isLongStay ? Colors.orange[700] : Colors.black45)),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  // Address
+                  Text(
+                    addr,
+                    style: const TextStyle(
+                        fontWeight: FontWeight.bold, fontSize: 14, color: Colors.black87, height: 1.3),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -763,98 +863,147 @@ class _LocationHistoryScreenState extends State<LocationHistoryScreen> with Tick
   Widget _buildTripCard(Trip trip, ColorScheme colorScheme) {
     final startTime = DateFormat('HH:mm').format(trip.startTime);
     final endTime = DateFormat('HH:mm').format(trip.endTime);
+
+    // Calculate distance + speed stats
     double dist = 0;
-    for(int i=0; i<trip.points.length-1; i++) {
-      dist += _calculateDistance(trip.points[i].latitude, trip.points[i].longitude, trip.points[i+1].latitude, trip.points[i+1].longitude);
+    double maxSpeedKmh = 0;
+    double totalSpeedSum = 0;
+    int speedCount = 0;
+    for (int i = 0; i < trip.points.length - 1; i++) {
+      final d = _calculateDistance(
+        trip.points[i].latitude, trip.points[i].longitude,
+        trip.points[i + 1].latitude, trip.points[i + 1].longitude,
+      ); // km
+      dist += d;
+      final secs = trip.points[i + 1].timestamp.difference(trip.points[i].timestamp).inSeconds;
+      if (secs > 0 && d > 0) {
+        final spd = (d / secs) * 3600; // km/h
+        if (spd > 0.5 && spd < 200) {
+          totalSpeedSum += spd;
+          speedCount++;
+          if (spd > maxSpeedKmh) maxSpeedKmh = spd;
+        }
+      }
+    }
+    final avgSpeed = speedCount > 0 ? totalSpeedSum / speedCount : 0.0;
+
+    // Activity detection
+    final String actEmoji;
+    final String actLabel;
+    final Color actColor;
+    if (avgSpeed > 25) {
+      actEmoji = '🚗';
+      actLabel = 'Lái xe';
+      actColor = const Color(0xFF2196F3);
+    } else if (avgSpeed > 8) {
+      actEmoji = '🚴';
+      actLabel = 'Đạp xe';
+      actColor = const Color(0xFF4CAF50);
+    } else {
+      actEmoji = '🚶';
+      actLabel = 'Đi bộ';
+      actColor = const Color(0xFFFF9800);
     }
 
-    return Container(
-      margin: const EdgeInsets.only(top: 8, bottom: 8),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 12, offset: const Offset(0, 4))],
-      ),
-      child: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text('$startTime ~ $endTime (${trip.durationMinutes}m)', style: const TextStyle(color: Colors.black26, fontSize: 13)),
-                    const Icon(Icons.more_horiz, color: Colors.black26),
-                  ],
-                ),
-                Row(
-                  children: [
-                    const Icon(Icons.directions_car, size: 32, color: Color(0xFF2196F3)),
-                    const SizedBox(width: 12),
-                    Text('${dist.toStringAsFixed(1)} km Chuyến đi', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.black87)),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                _buildTripTimeline(trip),
-              ],
-            ),
-          ),
-          
-          // Mini Map with PLAY ICON
-          SizedBox(
-            height: 180,
-            child: ClipRRect(
-              child: Stack(
+    final distStr = dist >= 1
+        ? '${dist.toStringAsFixed(1)} km'
+        : '${(dist * 1000).round()} m';
+    final durationStr = trip.durationMinutes >= 60
+        ? '${(trip.durationMinutes / 60).floor()}h${trip.durationMinutes % 60}p'
+        : '${trip.durationMinutes}p';
+
+    return InkWell(
+      onTap: () => _openTripPlayback(trip),
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 6),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(
+                color: Colors.black.withOpacity(0.05),
+                blurRadius: 14,
+                offset: const Offset(0, 4))
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  FlutterMap(
-                    options: MapOptions(
-                      initialCenter: LatLng(trip.points.first.latitude, trip.points.first.longitude),
-                      initialZoom: 14,
-                      interactionOptions: const InteractionOptions(flags: 0),
-                    ),
+                  // Header: activity chip + time range
+                  Row(
                     children: [
-                      TileLayer(
-                        urlTemplate: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
-                        subdomains: const ['a', 'b', 'c', 'd'],
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                        decoration: BoxDecoration(
+                          color: actColor.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(actEmoji, style: const TextStyle(fontSize: 13)),
+                            const SizedBox(width: 5),
+                            Text(actLabel,
+                                style: TextStyle(
+                                    color: actColor,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.bold)),
+                          ],
+                        ),
                       ),
-                      PolylineLayer(polylines: [
-                        Polyline(points: trip.points.map((p) => LatLng(p.latitude, p.longitude)).toList(), color: const Color(0xFF2196F3), strokeWidth: 4),
-                      ]),
+                      const Spacer(),
+                      Text('$startTime → $endTime',
+                          style: const TextStyle(color: Colors.black38, fontSize: 11)),
                     ],
                   ),
-                  // Dark overlay
-                  Container(color: Colors.black.withOpacity(0.05)),
-                  // CENTER PLAY BUTTON
-                  Center(
-                    child: Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(color: Colors.white.withOpacity(0.9), shape: BoxShape.circle, boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 10)]),
-                      child: const Icon(Icons.play_arrow_rounded, size: 40, color: Color(0xFF2196F3)),
-                    ),
-                  ),
-                  Positioned.fill(
-                    child: Material(
-                      color: Colors.transparent,
-                      child: InkWell(onTap: () => _openTripPlayback(trip)),
-                    ),
+                  const SizedBox(height: 12),
+                  // Route from → to
+                  _buildTripTimeline(trip),
+                  const SizedBox(height: 12),
+                  // Stats chips row
+                  Row(
+                    children: [
+                      _buildStatChip(Icons.route, distStr, const Color(0xFF2196F3)),
+                      const SizedBox(width: 6),
+                      _buildStatChip(Icons.timer_outlined, durationStr, Colors.black45),
+                      if (maxSpeedKmh > 5) ...[
+                        const SizedBox(width: 6),
+                        _buildStatChip(Icons.speed, '↑${maxSpeedKmh.round()} km/h',
+                            maxSpeedKmh > 80 ? Colors.red : Colors.black45),
+                      ],
+                    ],
                   ),
                 ],
               ),
             ),
-          ),
-          
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
-              children: [
-                _buildTripStat(Icons.speed, 'Tốc độ', 'Max 60km/h'),
-                _buildTripStat(Icons.warning_amber_rounded, 'Sự kiện', '0'),
-              ],
+            // Tap-to-play footer strip
+            Container(
+              decoration: BoxDecoration(
+                color: actColor.withOpacity(0.06),
+                borderRadius: const BorderRadius.vertical(bottom: Radius.circular(20)),
+              ),
+              padding: const EdgeInsets.symmetric(vertical: 9),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.play_circle_outline, size: 14, color: actColor),
+                  const SizedBox(width: 6),
+                  Text('Xem hành trình',
+                      style: TextStyle(
+                          fontSize: 11,
+                          color: actColor,
+                          fontWeight: FontWeight.w600)),
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -899,6 +1048,41 @@ class _LocationHistoryScreenState extends State<LocationHistoryScreen> with Tick
         ),
       ],
     );
+  }
+
+  Widget _buildStatChip(IconData icon, String value, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.07),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 10, color: color),
+          const SizedBox(width: 4),
+          Text(value, style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: color)),
+        ],
+      ),
+    );
+  }
+
+  /// Maps address string to a place category emoji
+  String _getPlaceEmoji(String address) {
+    final addr = address.toLowerCase();
+    if (addr.contains('nhà') || addr.contains('home') || addr.contains('house')) return '🏠';
+    if (addr.contains('trường') || addr.contains('school') || addr.contains('university')) return '🏫';
+    if (addr.contains('bệnh viện') || addr.contains('phòng khám') || addr.contains('hospital')) return '🏥';
+    if (addr.contains('cà phê') || addr.contains('coffee') || addr.contains('cafe')) return '☕';
+    if (addr.contains('nhà hàng') || addr.contains('restaurant') || addr.contains('quán ăn')) return '🍽️';
+    if (addr.contains('siêu thị') || addr.contains('shop') || addr.contains('cửa hàng')) return '🛍️';
+    if (addr.contains('công viên') || addr.contains('park') || addr.contains('sân')) return '🌳';
+    if (addr.contains('văn phòng') || addr.contains('office') || addr.contains('công ty')) return '🏢';
+    if (addr.contains('xăng') || addr.contains('gas') || addr.contains('petrol')) return '⛽';
+    if (addr.contains('sân bay') || addr.contains('airport')) return '✈️';
+    if (addr.contains('khách sạn') || addr.contains('hotel')) return '🏨';
+    return '📍'; // default pin
   }
 
   void _openTripPlayback(Trip trip) {
